@@ -77,18 +77,23 @@ and delivers the outbox. The FastAPI process does not start it automatically.
 
 ### Deploy on Render
 
-`render.yaml` defines a free Postgres database, web service, and worker. Create
-a Blueprint from this repository, then enter the `sync: false` secrets
-(`RESILINET_AGENTBOXD_API_KEY`, `RESILINET_AGENTBOXD_WEBHOOK_SECRET`,
-`RESILINET_NVIDIA_API_KEY`, `RESILINET_NOMINATIM_CONTACT_EMAIL`) in the Render
-dashboard. After the web service is live, provision once:
+`render.yaml` defines a free Postgres database and web service. Render's free
+plan does not offer background worker services, so the blueprint sets
+`RESILINET_RUN_WORKER_IN_APP=true` and the web process runs the same durable
+worker as `scripts/run_worker.py`. Create a Blueprint from this repository,
+then enter the `sync: false` secrets (`RESILINET_AGENTBOXD_API_KEY`,
+`RESILINET_AGENTBOXD_WEBHOOK_SECRET`, `RESILINET_NVIDIA_API_KEY`,
+`RESILINET_NOMINATIM_CONTACT_EMAIL`) in the Render dashboard. After the web
+service is live, provision once:
 
 ```bash
 render jobs create <web-service-id> --start-command "uv run python scripts/provision.py"
 ```
 
-Free web services sleep after inactivity and free Postgres expires after 30
-days; use paid plans for a stable webhook and demo. Update
+If you deploy a paid Render worker service instead, remove
+`RESILINET_RUN_WORKER_IN_APP` and run `uv run python scripts/run_worker.py`
+there. Free web services sleep after inactivity and free Postgres expires after
+30 days; use paid plans for a stable webhook and demo. Update
 `RESILINET_PUBLIC_BASE_URL` if Render assigns a different hostname than
 `resilinet-web.onrender.com`.
 

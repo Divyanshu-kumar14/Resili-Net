@@ -17,39 +17,11 @@ services:
         value: live
       - key: RESILINET_LLM_PROVIDER
         value: nvidia
-      - key: RESILINET_DATABASE_URL
-        fromDatabase:
-          name: resilinet-db
-          property: connectionString
-      - key: RESILINET_INCIDENT_KEY
-        value: demo-incident
-      - key: RESILINET_PUBLIC_BASE_URL
-        value: https://resilinet-web.onrender.com
-      - key: RESILINET_NVIDIA_MODEL
-        value: meta/llama-3.3-70b-instruct
-      - key: RESILINET_NVIDIA_BASE_URL
-        value: https://integrate.api.nvidia.com/v1
-      - key: RESILINET_NOMINATIM_CONTACT_EMAIL
-        sync: false
-      - key: RESILINET_AGENTBOXD_API_KEY
-        sync: false
-      - key: RESILINET_AGENTBOXD_WEBHOOK_SECRET
-        sync: false
-      - key: RESILINET_NVIDIA_API_KEY
-        sync: false
-
-  - type: worker
-    name: resilinet-worker
-    runtime: python
-    region: oregon
-    plan: free
-    buildCommand: pip install uv && uv sync --frozen --no-dev
-    startCommand: uv run python scripts/run_worker.py
-    envVars:
-      - key: RESILINET_APP_ENV
-        value: live
-      - key: RESILINET_LLM_PROVIDER
-        value: nvidia
+      # Render's free plan does not offer background worker services. Run the
+      # durable worker inside this process; use scripts/run_worker.py instead
+      # when deploying a paid worker service.
+      - key: RESILINET_RUN_WORKER_IN_APP
+        value: "true"
       - key: RESILINET_DATABASE_URL
         fromDatabase:
           name: resilinet-db

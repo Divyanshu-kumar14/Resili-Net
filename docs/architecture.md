@@ -212,9 +212,10 @@ signed envelope -> POST /internal/agentboxd/events
 - Outbound rows are delivered with a stable `outbox:<uuid>` idempotency key. A
   row left in `sending` by a crash is reclaimed after a stale window; the
   provider key makes that replay safe. `scripts/run_worker.py` drives the
-  message and outbox loops, and `render.yaml` runs it as a Render worker. The
-  FastAPI process does not start it automatically; high-availability
-  supervision remains later work.
+  message and outbox loops. `render.yaml` runs the same runtime inside the web
+  process on Render's free plan (`RESILINET_RUN_WORKER_IN_APP=true`), or as a
+  standalone worker on paid plans. High-availability supervision remains later
+  work.
 
 ## Public identifiers and logging
 

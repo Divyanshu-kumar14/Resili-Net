@@ -148,6 +148,11 @@ def test_default_openai_base_url_includes_the_api_version() -> None:
     assert settings.nvidia_base_url == "https://integrate.api.nvidia.com/v1"
 
 
+def test_in_app_worker_is_opt_in() -> None:
+    assert Settings(_env_file=None).run_worker_in_app is False
+    assert Settings(run_worker_in_app=True, _env_file=None).run_worker_in_app is True
+
+
 def test_unknown_intelligence_provider_is_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(llm_provider="other", _env_file=None)
