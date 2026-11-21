@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -150,3 +151,21 @@ async def test_unknown_incident_returns_404(
     response = await post(app, body, signed_headers(body, clock))
 
     assert response.status_code == 404
+
+
+async def test_non_inbound_event_is_acknowledged_without_ingestion(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    body = json.dumps(
+        {"id": "evt-sent", "type": "message.sent", "data": {}}
+    ).encode("utf-8")
+    app = make_app(session_factory, clock)
+
+    response = await post(app, body, signed_headers(body, clock))
+
+    assert response.status_code == 204
+    async with session_factory() as session:
+        assert await session.scalar(sa.select(sa.func.count(Message.id))) == 0
+        assert await session.scalar(sa.select(sa.func.count(Job.id))) == 0

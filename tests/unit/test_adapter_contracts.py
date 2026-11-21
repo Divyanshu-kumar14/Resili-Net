@@ -27,6 +27,7 @@ from resilinet.adapters.agentboxd import (
 )
 from resilinet.adapters.fakes import FakeInboxProvider
 from resilinet.ports import (
+    IgnoredWebhookEvent,
     LeaseExpiredError,
     MessageNotFoundError,
     OutboundDraft,
@@ -212,6 +213,17 @@ async def test_parse_webhook_verifies_before_json_parsing(inbox_provider: Any) -
     }
     with pytest.raises(WebhookPayloadError):
         await inbox_provider.parse_webhook(malformed_raw, malformed_headers)
+
+
+async def test_non_inbound_event_is_ignored(inbox_provider: Any) -> None:
+    raw, headers = signed_body(
+        {"id": "evt-sent", "type": "message.sent", "data": {}}
+    )
+
+    with pytest.raises(IgnoredWebhookEvent) as excinfo:
+        await inbox_provider.parse_webhook(raw, headers)
+
+    assert excinfo.value.event_type == "message.sent"
 
 
 async def test_duplicate_received_enriched_and_released_events_share_message_identity(

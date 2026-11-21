@@ -32,6 +32,7 @@ from ..ports import (
     AckReceipt,
     AdapterError,
     ClaimedMessage,
+    IgnoredWebhookEvent,
     InboundEvent,
     LeaseExpiredError,
     Mailbox,
@@ -181,7 +182,10 @@ def parse_signed_webhook(
 
     event_type = str(payload.get("type") or "")
     if event_type not in MESSAGE_EVENTS:
-        raise WebhookPayloadError(f"unsupported event type: {event_type or 'missing'}")
+        # Delivery, inbox, domain, draft, and other provider events do not
+        # change ResiliNet state. Acknowledge them so the provider stops
+        # retrying, but never feed them into ingestion.
+        raise IgnoredWebhookEvent(event_type or "missing")
 
     data = _as_mapping(payload.get("data"))
     created_at = payload.get("created_at")

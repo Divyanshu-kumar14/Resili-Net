@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, cast
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from ..models import Incident
-from ..ports import AdapterError, WebhookVerificationError
+from ..ports import AdapterError, IgnoredWebhookEvent, WebhookVerificationError
 from ..services.ingestion import IngestionService
 
 if TYPE_CHECKING:
     from ..main import Container
+
+logger = logging.getLogger("resilinet.webhook")
 
 router = APIRouter()
 
@@ -43,6 +46,9 @@ async def agentboxd_events(request: Request) -> Response:
     raw = await request.body()
     try:
         event = await container.inbox.parse_webhook(raw, request.headers)
+    except IgnoredWebhookEvent as exc:
+        logger.info("ignored_agentboxd_event", extra={"event_type": exc.event_type})
+        return Response(status_code=204)
     except WebhookVerificationError as exc:
         raise HTTPException(
             status_code=400, detail="invalid webhook signature or timestamp"

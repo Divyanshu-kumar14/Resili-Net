@@ -32,6 +32,14 @@ class WebhookPayloadError(AdapterError):
     """A verified envelope did not match the documented event shape."""
 
 
+class IgnoredWebhookEvent(AdapterError):
+    """A verified provider event that does not change ResiliNet state."""
+
+    def __init__(self, event_type: str) -> None:
+        super().__init__(event_type)
+        self.event_type = event_type
+
+
 class MessageNotFoundError(AdapterError):
     """The provider no longer has the requested message."""
 
