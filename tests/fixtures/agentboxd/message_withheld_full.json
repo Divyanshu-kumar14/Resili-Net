@@ -1,0 +1,15 @@
+{
+  "id": "msg_02",
+  "inbox_id": "inbox_02",
+  "thread_id": "thread_02",
+  "from": "sender@example.org",
+  "to": "incident-b@homingbox.net",
+  "subject": "Medical supplies",
+  "text": "We need insulin and two oxygen cylinders at Shelter 9.",
+  "extracted_text": "We need insulin and two oxygen cylinders at Shelter 9.",
+  "received_at": "2026-11-21T12:00:01.000Z",
+  "labels": [],
+  "attachments": [],
+  "withheld": false,
+  "headers": { "message-id": "<held@example.org>" }
+}

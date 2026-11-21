@@ -1,0 +1,21 @@
+{
+  "id": "evt_03",
+  "type": "message.received",
+  "created_at": "2026-11-21T12:00:02.000Z",
+  "data": {
+    "inbox": { "id": "inbox_02", "address": "incident-b@homingbox.net" },
+    "thread_id": "thread_02",
+    "message": {
+      "id": "msg_02",
+      "inbox_id": "inbox_02",
+      "thread_id": "thread_02",
+      "from": "sender@example.org",
+      "to": "incident-b@homingbox.net",
+      "subject": "Medical supplies",
+      "received_at": "2026-11-21T12:00:01.000Z",
+      "labels": ["held"],
+      "attachments": [],
+      "withheld": true
+    }
+  }
+}
