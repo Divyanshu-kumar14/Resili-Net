@@ -204,7 +204,10 @@ class ClarificationService:
         if "location" in fields:
             if corrected.lat is None or corrected.lon is None:
                 raise MergeError("location is still unresolved")
-            if corrected.confidence.location < LOCATION_CONFIDENCE_MIN:
+            if (
+                corrected.confidence.location < LOCATION_CONFIDENCE_MIN
+                and corrected.geo_confidence is not GeoConfidence.EXACT
+            ):
                 raise MergeError("location confidence is still too low")
             updates.update(
                 lat=corrected.lat,

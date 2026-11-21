@@ -149,15 +149,17 @@ class ExtractionService:
         context = parsed.context
         fields: list[str] = list(parsed.needs_clarification)
         fields.extend(context.clarification_fields)
+        explicit_fields = set(fields)
 
         if parsed.split_required:
             fields.append("split")
-        if context.kind in MATCHED_KINDS and not (context.entity_name or "").strip():
-            fields.append("entity_name")
+        if context.kind in MATCHED_KINDS:
+            if not (context.entity_name or "").strip():
+                fields.append("entity_name")
+            if context.confidence.items < ITEMS_CONFIDENCE_MIN:
+                fields.append("items")
         if context.confidence.location < LOCATION_CONFIDENCE_MIN:
             fields.append("location")
-        if context.confidence.items < ITEMS_CONFIDENCE_MIN:
-            fields.append("items")
         if any(
             report.quantity is not None
             and report.quantity > MAX_PLAUSIBLE_QUANTITY
@@ -165,10 +167,24 @@ class ExtractionService:
         ):
             fields.append("quantity")
 
-        if context.kind in MATCHED_KINDS and not parsed.split_required:
+        has_location = bool((context.location_text or "").strip())
+        has_coordinates = context.lat is not None and context.lon is not None
+        if not parsed.split_required and (has_location or has_coordinates):
             context = await self._resolve_location(context)
-            if context.geo_confidence is GeoConfidence.NONE:
+            if (
+                context.kind in MATCHED_KINDS
+                and context.geo_confidence is GeoConfidence.NONE
+            ):
                 fields.append("location")
+            elif (
+                context.geo_confidence is GeoConfidence.EXACT
+                and "location" not in explicit_fields
+            ):
+                # A curated gazetteer match or explicit coordinates are
+                # authoritative; do not ask the sender to repeat a location the
+                # system already knows. This also geocodes location-only
+                # corrections whose kind is not a matched report.
+                fields = [field for field in fields if field != "location"]
 
         unique_fields = list(dict.fromkeys(fields))
         if unique_fields:

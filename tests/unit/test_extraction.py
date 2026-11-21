@@ -261,16 +261,62 @@ async def test_injection_does_not_change_the_parsed_result() -> None:
 # -- deterministic gates -------------------------------------------------------
 
 
-async def test_low_location_confidence_requests_clarification() -> None:
+async def test_exact_geocode_overrides_low_location_confidence() -> None:
     service = ExtractionService(
         INCIDENT_ID,
         StubIntelligence(valid_parsed(location_confidence=0.59)),
         StubGeocoder(gandhi_park()),
     )
     parsed = await service.parse(NOW_TEXT)
+    assert isinstance(parsed, ParsedEmail)
+    assert parsed.context.geo_confidence is GeoConfidence.EXACT
+    assert "location" not in parsed.context.clarification_fields
+
+
+async def test_area_geocode_does_not_override_low_location_confidence() -> None:
+    area = GeoResult(
+        lat=Decimal("22.5726"),
+        lon=Decimal("88.3639"),
+        confidence=GeoConfidence.AREA,
+        source="nominatim",
+    )
+    service = ExtractionService(
+        INCIDENT_ID,
+        StubIntelligence(valid_parsed(location_confidence=0.59)),
+        StubGeocoder(area),
+    )
+    parsed = await service.parse(NOW_TEXT)
     assert not isinstance(parsed, ParsedEmail)
     assert "location" in parsed.fields
-    assert parsed.parsed is not None
+
+
+def location_only_parsed(location_confidence: float = 0.5) -> ParsedEmail:
+    return ParsedEmail(
+        context=ReportContext(
+            kind=ReportKind.OTHER,
+            location_text="Gandhi Park, Kolkata",
+            confidence=FieldConfidence(
+                location=location_confidence, items=0.0, headcount=0.0
+            ),
+        ),
+        reports=[ParsedReport(resource=Resource.OTHER)],
+    )
+
+
+async def test_location_only_correction_is_geocoded_for_a_non_matched_kind() -> None:
+    geocoder = StubGeocoder(gandhi_park())
+    service = ExtractionService(
+        INCIDENT_ID,
+        StubIntelligence(location_only_parsed()),
+        geocoder,
+    )
+
+    parsed = await service.parse(NOW_TEXT)
+
+    assert isinstance(parsed, ParsedEmail)
+    assert parsed.context.geo_confidence is GeoConfidence.EXACT
+    assert parsed.context.location_source == "gazetteer"
+    assert geocoder.calls == 1
 
 
 async def test_low_item_confidence_requests_clarification() -> None:

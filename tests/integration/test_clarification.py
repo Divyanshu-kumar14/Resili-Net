@@ -60,6 +60,7 @@ def parsed(
     reports: list[ParsedReport] | None = None,
     split_required: bool = False,
     items_confidence: float = 0.95,
+    location_confidence: float = 0.95,
 ) -> ParsedEmail:
     return ParsedEmail(
         context=ReportContext(
@@ -73,7 +74,9 @@ def parsed(
             headcount=headcount,
             urgency=urgency,
             confidence=FieldConfidence(
-                location=0.95, items=items_confidence, headcount=0.95
+                location=location_confidence,
+                items=items_confidence,
+                headcount=0.95,
             ),
         ),
         reports=reports
@@ -335,6 +338,30 @@ async def test_unasked_fields_are_not_overwritten(
         merged = service.merge(original, correction, ["location"])
 
     assert merged.reports[0].quantity == Decimal("100")
+    assert merged.context.lat == Decimal("22.572600")
+    assert merged.context.geo_confidence is GeoConfidence.EXACT
+
+
+async def test_exact_correction_overrides_low_model_confidence(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+) -> None:
+    sender_id = await seed_sender(session_factory, incident_id)
+    await seed_message(session_factory, incident_id, sender_id)
+    original = parsed(
+        location_text=None,
+        lat=None,
+        lon=None,
+        geo=GeoConfidence.NONE,
+    )
+    correction = parsed(location_confidence=0.5)
+
+    async with transaction(session_factory) as session:
+        service = ClarificationService(
+            session, NotificationService(), clock=lambda: NOW
+        )
+        merged = service.merge(original, correction, ["location"])
+
     assert merged.context.lat == Decimal("22.572600")
     assert merged.context.geo_confidence is GeoConfidence.EXACT
 
