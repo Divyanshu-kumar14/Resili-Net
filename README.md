@@ -90,12 +90,12 @@ service is live, provision once:
 render jobs create <web-service-id> --start-command "uv run python scripts/provision.py"
 ```
 
-If you deploy a paid Render worker service instead, remove
-`RESILINET_RUN_WORKER_IN_APP` and run `uv run python scripts/run_worker.py`
-there. Free web services sleep after inactivity and free Postgres expires after
-30 days; use paid plans for a stable webhook and demo. Update
-`RESILINET_PUBLIC_BASE_URL` if Render assigns a different hostname than
-`resilinet-web.onrender.com`.
+If you deploy a paid Render worker service instead, set
+`RESILINET_RUN_WORKER_IN_APP=false` on the web service and run
+`uv run python scripts/run_worker.py` there. Free web services sleep after
+inactivity and free Postgres expires after 30 days; use paid plans for a stable
+webhook and demo. Update `RESILINET_PUBLIC_BASE_URL` if Render assigns a
+different hostname than `resilinet-web.onrender.com`.
 
 ## Checks
 

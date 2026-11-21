@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     momen_origins: tuple[str, ...] = ()
     log_level: str = "INFO"
     llm_provider: IntelligenceProviderName = "openai"
-    run_worker_in_app: bool = False
+    run_worker_in_app: bool = True
 
     agentboxd_base_url: str = "https://api.agentboxd.com"
     mojoauth_base_url: str = "https://api.mojoauth.com"

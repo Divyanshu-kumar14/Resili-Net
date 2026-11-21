@@ -148,9 +148,9 @@ def test_default_openai_base_url_includes_the_api_version() -> None:
     assert settings.nvidia_base_url == "https://integrate.api.nvidia.com/v1"
 
 
-def test_in_app_worker_is_opt_in() -> None:
-    assert Settings(_env_file=None).run_worker_in_app is False
-    assert Settings(run_worker_in_app=True, _env_file=None).run_worker_in_app is True
+def test_in_app_worker_defaults_on_and_can_be_disabled() -> None:
+    assert Settings(_env_file=None).run_worker_in_app is True
+    assert Settings(run_worker_in_app=False, _env_file=None).run_worker_in_app is False
 
 
 def test_unknown_intelligence_provider_is_rejected() -> None:
