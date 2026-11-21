@@ -176,8 +176,10 @@ async def test_withheld_envelope_is_deferred_then_fetched(
     accepted = await ingestion.accept(
         make_event(
             provider_message_id="msg-withheld",
+            subject="[not screened yet]",
             text=None,
             withheld=True,
+            thread_id=None,
             mailbox_id=mailbox.id,
         )
     )
@@ -210,6 +212,8 @@ async def test_withheld_envelope_is_deferred_then_fetched(
     assert message is not None
     assert message.status is MessageStatus.QUEUED
     assert message.withheld is False
+    assert message.subject == "Shelter 4 water"
+    assert message.thread_id == "thread-1"
     assert "zero potable water" in message.body_text
     assert process_job is not None
 

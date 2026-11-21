@@ -41,6 +41,7 @@ def build_intelligence_provider(settings: Settings) -> IntelligenceProvider:
         return NvidiaIntelligenceProvider(
             api_key=api_key,
             model=settings.nvidia_model,
+            fallback_models=settings.nvidia_fallback_models,
             base_url=settings.nvidia_base_url,
             timeout_seconds=settings.request_timeout_seconds,
         )

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import httpx
 import openai
 import pytest
 
@@ -89,11 +90,30 @@ class StubCreate:
         return outcome
 
 
-def provider(create: StubCreate) -> NvidiaIntelligenceProvider:
+def provider(
+    create: StubCreate, *, fallback_models: tuple[str, ...] = ()
+) -> NvidiaIntelligenceProvider:
     return NvidiaIntelligenceProvider(
         api_key="test-key",
         model="meta/llama-3.3-70b-instruct",
+        fallback_models=fallback_models,
         create=create,
+    )
+
+
+def retired_model_error(model: str) -> openai.APIStatusError:
+    request = httpx.Request(
+        "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
+    )
+    response = httpx.Response(
+        410,
+        request=request,
+        json={"error": {"message": f"{model} is retired"}},
+    )
+    return openai.APIStatusError(
+        f"410 Gone: {model}",
+        response=response,
+        body={"error": {"message": f"{model} is retired"}},
     )
 
 
@@ -198,3 +218,36 @@ async def test_generic_openai_error_is_non_retryable() -> None:
         await provider(create).extract(NOW_TEXT)
 
     assert excinfo.value.retryable is False
+
+
+async def test_retired_model_falls_back_without_a_repair_attempt() -> None:
+    create = StubCreate(
+        [
+            retired_model_error("meta/llama-3.3-70b-instruct"),
+            tool_response(parsed_payload()),
+        ]
+    )
+
+    result = await provider(
+        create, fallback_models=("nvidia/llama-3.3-nemotron-super-49b-v1.5",)
+    ).extract(NOW_TEXT)
+
+    assert result.context.entity_name == "Shelter 4"
+    assert len(create.calls) == 2
+    assert create.calls[0]["model"] == "meta/llama-3.3-70b-instruct"
+    assert create.calls[1]["model"] == "nvidia/llama-3.3-nemotron-super-49b-v1.5"
+
+
+async def test_all_retired_models_raise_a_non_retryable_error() -> None:
+    create = StubCreate(
+        [
+            retired_model_error("primary"),
+            retired_model_error("fallback"),
+        ]
+    )
+
+    with pytest.raises(ProviderUnavailableError) as excinfo:
+        await provider(create, fallback_models=("fallback",)).extract(NOW_TEXT)
+
+    assert excinfo.value.retryable is False
+    assert len(create.calls) == 2

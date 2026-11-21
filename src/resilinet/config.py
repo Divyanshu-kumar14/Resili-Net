@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1-mini"
     openai_base_url: str = "https://api.openai.com/v1"
     nvidia_model: str = "meta/llama-3.3-70b-instruct"
+    nvidia_fallback_models: tuple[str, ...] = (
+        "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "nvidia/nemotron-3.5-lightning-30b-a3b",
+        "openai/gpt-oss-120b",
+    )
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     nominatim_contact_email: str | None = None

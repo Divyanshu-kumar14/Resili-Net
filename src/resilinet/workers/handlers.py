@@ -1018,6 +1018,9 @@ class MessageJobHandler:
                 return
             current.raw_text = fetched.text
             current.body_text = body
+            current.subject = fetched.subject
+            if fetched.thread_id is not None:
+                current.thread_id = fetched.thread_id
             current.withheld = fetched.withheld
             current.attachment_count = fetched.attachment_count
             current.status = MessageStatus.QUEUED

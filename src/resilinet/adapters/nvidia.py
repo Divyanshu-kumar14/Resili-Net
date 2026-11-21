@@ -51,12 +51,18 @@ class NvidiaIntelligenceProvider:
         *,
         api_key: str,
         model: str,
+        fallback_models: tuple[str, ...] = (),
         base_url: str = "https://integrate.api.nvidia.com/v1",
         timeout_seconds: float = 20.0,
         temperature: float | None = 0.0,
         create: ChatCreate | None = None,
     ) -> None:
-        self._model = model
+        models = [model]
+        for candidate in fallback_models:
+            cleaned = candidate.strip()
+            if cleaned and cleaned not in models:
+                models.append(cleaned)
+        self._models = models
         self._temperature = temperature
         if create is None:
             client = openai.AsyncOpenAI(
@@ -109,37 +115,47 @@ class NvidiaIntelligenceProvider:
                     f"required schema: {feedback}. Return a corrected answer that "
                     "validates.</validation_feedback>"
                 )
-            kwargs: dict[str, Any] = {
-                "model": self._model,
-                "messages": [
-                    {"role": "system", "content": instructions + _TOOL_DIRECTIVE},
-                    {"role": "user", "content": content},
-                ],
-                "tools": [tool_for_schema(schema)],
-            }
-            if self._temperature is not None:
-                kwargs["temperature"] = self._temperature
-            try:
-                response = await self._create(**kwargs)
-            except ProviderUnavailableError:
-                raise
-            except (
-                openai.APIConnectionError,
-                openai.RateLimitError,
-                openai.InternalServerError,
-            ) as exc:
-                raise ProviderUnavailableError(
-                    f"nvidia request failed: {type(exc).__name__}", retryable=True
-                ) from exc
-            except openai.APIStatusError as exc:
-                raise ProviderUnavailableError(
-                    f"nvidia rejected the request with status {exc.status_code}",
-                    retryable=exc.status_code >= 500 or exc.status_code == 429,
-                ) from exc
-            except openai.OpenAIError as exc:
-                raise ProviderUnavailableError(
-                    f"nvidia error: {type(exc).__name__}", retryable=False
-                ) from exc
+            while True:
+                model = self._models[0]
+                kwargs: dict[str, Any] = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": instructions + _TOOL_DIRECTIVE},
+                        {"role": "user", "content": content},
+                    ],
+                    "tools": [tool_for_schema(schema)],
+                }
+                if self._temperature is not None:
+                    kwargs["temperature"] = self._temperature
+                try:
+                    response = await self._create(**kwargs)
+                    break
+                except ProviderUnavailableError:
+                    raise
+                except (
+                    openai.APIConnectionError,
+                    openai.RateLimitError,
+                    openai.InternalServerError,
+                ) as exc:
+                    raise ProviderUnavailableError(
+                        f"nvidia request failed: {type(exc).__name__}", retryable=True
+                    ) from exc
+                except openai.APIStatusError as exc:
+                    if exc.status_code in (404, 410) and len(self._models) > 1:
+                        retired = self._models.pop(0)
+                        logger.warning(
+                            "nvidia_model_unavailable",
+                            extra={"model": retired, "status": exc.status_code},
+                        )
+                        continue
+                    raise ProviderUnavailableError(
+                        f"nvidia rejected {model} with status {exc.status_code}",
+                        retryable=exc.status_code >= 500 or exc.status_code == 429,
+                    ) from exc
+                except openai.OpenAIError as exc:
+                    raise ProviderUnavailableError(
+                        f"nvidia error: {type(exc).__name__}", retryable=False
+                    ) from exc
 
             try:
                 arguments = _tool_arguments(response)
