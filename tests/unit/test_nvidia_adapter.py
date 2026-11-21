@@ -191,6 +191,25 @@ async def test_schema_validation_failure_is_repaired_once() -> None:
     assert "validation_feedback" in create.calls[1]["messages"][1]["content"]
 
 
+async def test_stringified_nested_context_is_normalized() -> None:
+    payload = parsed_payload()
+    payload["context"] = json.dumps(payload["context"])
+    create = StubCreate([tool_response(payload)])
+
+    result = await provider(create).extract(NOW_TEXT)
+
+    assert result.context.entity_name == "Shelter 4"
+
+
+async def test_double_encoded_tool_arguments_are_normalized() -> None:
+    payload = parsed_payload()
+    create = StubCreate([tool_response(json.dumps(payload))])
+
+    result = await provider(create).extract(NOW_TEXT)
+
+    assert result.context.entity_name == "Shelter 4"
+
+
 async def test_critique_returns_a_structured_verdict() -> None:
     create = StubCreate([tool_response({"verdict": "approve", "objections": []})])
 

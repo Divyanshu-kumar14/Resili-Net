@@ -158,7 +158,7 @@ class NvidiaIntelligenceProvider:
                     ) from exc
 
             try:
-                arguments = _tool_arguments(response)
+                arguments = _normalize_json_strings(_tool_arguments(response))
             except (AttributeError, IndexError, TypeError, ValueError) as exc:
                 last_error = str(exc)[:800]
                 feedback = last_error
@@ -181,6 +181,30 @@ class NvidiaIntelligenceProvider:
             f"{schema.__name__} was not produced after "
             f"{MAX_REPAIR_ATTEMPTS + 1} attempts: {last_error}"
         )
+
+
+def _normalize_json_strings(value: Any) -> Any:
+    """Decode JSON embedded in string fields.
+
+    Some NIM models serialize nested objects (for example ``context``) as a
+    JSON string inside the tool arguments. Pydantic correctly rejects that, so
+    decode only strings that look like JSON objects or arrays, recursively.
+    """
+
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith(("{", "[")):
+            try:
+                decoded = json.loads(stripped)
+            except ValueError:
+                return value
+            return _normalize_json_strings(decoded)
+        return value
+    if isinstance(value, dict):
+        return {key: _normalize_json_strings(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_json_strings(item) for item in value]
+    return value
 
 
 def _tool_arguments(response: Any) -> Any:

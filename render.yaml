@@ -31,7 +31,7 @@ services:
       - key: RESILINET_PUBLIC_BASE_URL
         value: https://resilinet-web.onrender.com
       - key: RESILINET_NVIDIA_MODEL
-        value: meta/llama-3.3-70b-instruct
+        value: nvidia/nemotron-3.5-lightning-30b-a3b
       - key: RESILINET_NVIDIA_BASE_URL
         value: https://integrate.api.nvidia.com/v1
       - key: RESILINET_NOMINATIM_CONTACT_EMAIL
