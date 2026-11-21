@@ -38,7 +38,7 @@ from .allocations import (
     NeedRecord,
 )
 from .extraction import ExtractionService
-from .ingestion import IngestionService
+from .ingestion import MemoryIngestionService
 from .notifications import NotificationService, RecommendationLine, StockLine
 from .public import map_snapshot
 
@@ -77,7 +77,8 @@ class Pipeline:
         self.incident_id = incident_id
         self._inbox = inbox
         self._clock = clock or (lambda: datetime.now(UTC))
-        self.ingestion = IngestionService(incident_id)
+        # Phase 0 slice only: deleted with the synchronous pipeline in Phase 2.
+        self.ingestion = MemoryIngestionService(incident_id)
         self.extraction = ExtractionService(incident_id, intelligence, geocoder)
         self.allocations = AllocationService(clock=self._clock, references=references)
         self.notifications = NotificationService()

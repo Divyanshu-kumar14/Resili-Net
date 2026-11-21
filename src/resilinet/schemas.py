@@ -113,15 +113,23 @@ class ParsedEmail(StrictModel):
     context: ReportContext
     reports: list[ParsedReport] = Field(min_length=1)
     needs_clarification: list[str] = Field(default_factory=list)
+    #: True when the message mixes entities, locations, or report kinds and the
+    #: model could not attribute every line to the single parsed context.
+    split_required: bool = False
     raw_excerpt: str | None = None
 
 
 class ClarificationRequired(StrictModel):
-    """One-round clarification outcome: the listed fields block matching."""
+    """One-round clarification outcome: the listed fields block matching.
+
+    ``parsed`` keeps the partial extraction so a reply can be merged into the
+    original report instead of re-interpreting it from scratch.
+    """
 
     fields: list[str] = Field(min_length=1)
     kind: ReportKind = ReportKind.OTHER
     reason: str | None = None
+    parsed: ParsedEmail | None = None
 
 
 class CriticCandidate(StrictModel):

@@ -1,18 +1,51 @@
-"""Async engine, session factory, and transaction helper."""
+"""Async engine, session factory, transaction helper, and UTC timestamp type."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
+from sqlalchemy.engine import Dialect
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.types import DateTime, TypeDecorator
 
 from .config import Settings
+
+
+def utcnow() -> datetime:
+    """Return an aware UTC timestamp for column defaults and services."""
+    return datetime.now(UTC)
+
+
+class UTCDateTime(TypeDecorator[datetime]):
+    """Store UTC and always return an aware UTC ``datetime``.
+
+    SQLite drops timezone information, while PostgreSQL keeps it. Round-tripping
+    through this type keeps domain comparisons identical on both backends.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
+
+    def process_result_value(self, value: datetime | None, dialect: Dialect) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
 
 def create_engine(settings: Settings) -> AsyncEngine:

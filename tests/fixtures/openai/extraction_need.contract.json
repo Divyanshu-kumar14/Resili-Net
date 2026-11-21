@@ -1,0 +1,36 @@
+{
+  "note": "Hand-written contract example for the ParsedEmail structured-output schema. No live OpenAI account was available; this is a schema contract fixture, not a recorded response.",
+  "payload": {
+    "context": {
+      "kind": "NEED",
+      "entity_name": "Shelter 4",
+      "entity_type": "shelter",
+      "location_text": "near Gandhi Park",
+      "lat": null,
+      "lon": null,
+      "geo_confidence": "none",
+      "location_source": null,
+      "urgency": "high",
+      "headcount": 40,
+      "reference_id": null,
+      "clarification_fields": [],
+      "confidence": {
+        "location": 0.95,
+        "items": 0.92,
+        "headcount": 0.97
+      }
+    },
+    "reports": [
+      {
+        "resource": "potable_water",
+        "quantity": null,
+        "unit": null,
+        "qualifier": "zero available",
+        "raw_text": "zero potable water"
+      }
+    ],
+    "needs_clarification": [],
+    "split_required": false,
+    "raw_excerpt": null
+  }
+}

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     app_env: AppEnv = "test"
     database_url: str = "sqlite+aiosqlite:///./resilinet.db"
     public_base_url: str = "http://localhost:8000"
+    incident_key: str = Field(default="demo-incident", min_length=1, max_length=120)
     momen_origins: tuple[str, ...] = ()
     log_level: str = "INFO"
 

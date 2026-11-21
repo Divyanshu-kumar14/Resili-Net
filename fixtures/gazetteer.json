@@ -1,0 +1,26 @@
+{
+  "simulation": true,
+  "note": "Fictional places for the ResiliNet simulation. Coordinates are illustrative and are not a real gazetteer.",
+  "places": [
+    {"name": "Gandhi Park", "lat": "22.572600", "lon": "88.363900", "aliases": ["gandhi park", "gandhi garden"]},
+    {"name": "River Road", "lat": "22.576900", "lon": "88.370100", "aliases": ["river road", "riverside road"]},
+    {"name": "Central School", "lat": "22.568400", "lon": "88.359200", "aliases": ["central school", "central high school"]},
+    {"name": "Market Square", "lat": "22.571100", "lon": "88.366400", "aliases": ["market square", "old market"]},
+    {"name": "Old Bridge", "lat": "22.580200", "lon": "88.361700", "aliases": ["old bridge"]},
+    {"name": "North Clinic", "lat": "22.583500", "lon": "88.365800", "aliases": ["north clinic", "north health clinic"]},
+    {"name": "Railway Colony", "lat": "22.566800", "lon": "88.372300", "aliases": ["railway colony", "rail colony"]},
+    {"name": "Green Field", "lat": "22.563900", "lon": "88.364100", "aliases": ["green field", "greenfield ground"]},
+    {"name": "Temple Road", "lat": "22.574700", "lon": "88.374600", "aliases": ["temple road"]},
+    {"name": "Lake View", "lat": "22.561200", "lon": "88.369900", "aliases": ["lake view", "lakeview"]},
+    {"name": "New Colony", "lat": "22.578300", "lon": "88.377200", "aliases": ["new colony"]},
+    {"name": "Bus Stand", "lat": "22.569600", "lon": "88.371800", "aliases": ["bus stand", "central bus stand"]},
+    {"name": "Primary Health Centre", "lat": "22.575400", "lon": "88.358500", "aliases": ["primary health centre", "primary health center", "phc"]},
+    {"name": "Community Hall", "lat": "22.567200", "lon": "88.362700", "aliases": ["community hall"]},
+    {"name": "Pump House", "lat": "22.581800", "lon": "88.369300", "aliases": ["pump house", "water pump house"]},
+    {"name": "Grain Market", "lat": "22.572100", "lon": "88.380800", "aliases": ["grain market"]},
+    {"name": "Riverside School", "lat": "22.577600", "lon": "88.355400", "aliases": ["riverside school"]},
+    {"name": "Hill Road", "lat": "22.585100", "lon": "88.372900", "aliases": ["hill road"]},
+    {"name": "Stadium Ground", "lat": "22.564500", "lon": "88.376100", "aliases": ["stadium ground", "stadium"]},
+    {"name": "Brick Lane", "lat": "22.570300", "lon": "88.353900", "aliases": ["brick lane"]}
+  ]
+}

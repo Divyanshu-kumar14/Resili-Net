@@ -52,6 +52,10 @@ class ExtractionError(AdapterError):
     """The intelligence provider could not produce a schema-valid report."""
 
 
+class CritiqueError(AdapterError):
+    """The intelligence provider could not produce a schema-valid verdict."""
+
+
 @dataclass(frozen=True, slots=True)
 class Mailbox:
     id: str
@@ -196,6 +200,7 @@ __all__ = [
     "AdapterError",
     "AuthProvider",
     "ClaimedMessage",
+    "CritiqueError",
     "ExtractionError",
     "GeoResult",
     "Geocoder",

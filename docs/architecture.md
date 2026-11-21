@@ -152,6 +152,55 @@ dispatch or delivery.
 - SQLite tests prove behavior; PostgreSQL tests prove concurrent workers cannot
   over-reserve.
 
+## Phase 1 durable path
+
+```text
+signed envelope -> POST /internal/agentboxd/events
+  verify raw-body HMAC + 300 s timestamp window (400 on failure)
+  resolve the incident from RESILINET_INCIDENT_KEY (404 if unprovisioned)
+  one transaction:
+    lock the incident row (serialises the rolling limits on PostgreSQL)
+    sender upsert (case-insensitive identity)
+    rolling limits: 20/sender/hour, 200/incident/hour -> one throttled notice
+    Message insert, unique on (incident_id, provider_message_id) -> 204 duplicate
+    quote/signature stripping into body_text; raw_text kept internally
+    withheld content -> status deferred + fetch_content job
+    otherwise -> status queued + process_message job (dedupe_key process:<id>)
+```
+
+- The worker claims one due job with a row lock (skip-locked), leases it, and
+  runs the handler outside any transaction. A commit followed by a crash is
+  recoverable because the handler re-checks message state under a lock and a
+  retried job becomes a no-op. Expired leases are reclaimed; attempts back off
+  exponentially up to a dead letter. Terminal writes are fenced on
+  `(status=leased, lease_owner, attempts)`, so a stale worker cannot overwrite
+  a job another worker reclaimed or finished.
+- `fetch_content` fetches withheld mail, keeps the message deferred while the
+  provider still marks it withheld, then normalizes it and enqueues exactly one
+  `process_message` job. `process_message` extracts outside the transaction,
+  records injection findings, then persists reports/entities, asks one
+  clarification, merges one correction, or escalates to `ReviewCase` in a
+  single transaction. An audit-write failure is logged and never masks the
+  original job failure.
+- Geocoding resolves in order: curated gazetteer (`exact`), cached Nominatim
+  (`area`), `none`. The gazetteer is consulted before the cache and is not
+  cached, so a negative cache entry cannot mask a later known place. Cache keys
+  are `(incident_id, normalized location)`. Timeouts and malformed responses
+  are not cached; definitive empty results are negatively cached. Replay mode
+  constructs the adapter disabled and makes no request.
+- A clarification question lists every missing field and maps model field
+  names (`items`) onto mergeable fields. A correction is merged only for those
+  fields, only from the original sender, and only once, and is re-checked for
+  plausibility and confidence. A second correction, a wrong sender, or a reply
+  that arrives after the report left `clarification_pending` becomes a review
+  case without changing the completed report. Clean NEED/SUPPLY reports
+  intentionally queue no acknowledgement until Task 12's threaded
+  recommendation.
+- Outbound rows are delivered with a stable `outbox:<uuid>` idempotency key. A
+  row left in `sending` by a crash is reclaimed after a stale window; the
+  provider key makes that replay safe. The application does not start a
+  supervised worker loop yet; deployment supervision is Task 25.
+
 ## Public identifiers and logging
 
 - Public JSON uses stable UUIDs for incidents, entities, needs, and supplies;
@@ -164,12 +213,14 @@ dispatch or delivery.
 - No action token, session, sender address, or provider payload is serialized
   into public output or written to operational logs.
 
-## Phase 0 scope note
+## Phase 0/1 scope note
 
-The first vertical slice is a synchronous composition through the real ports
-and domain schemas. It is replaced by the durable implementation in later
-tasks; it is not a second engine. `FakeAuthProvider` is deliberately deferred to
-Phase 3 with the MojoAuth adapter.
+Phase 0's synchronous composition through the real ports and domain schemas is
+still present as the golden-path slice. Phase 1 added the durable intake,
+job runner, extraction persistence, geocoding, and clarification path beside
+it; the synchronous slice is replaced, not duplicated, in Phase 2.
+`FakeAuthProvider` is deliberately deferred to Phase 3 with the MojoAuth
+adapter.
 
 ## Unresolved account gates
 

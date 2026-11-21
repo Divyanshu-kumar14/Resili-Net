@@ -11,11 +11,13 @@ consumes it.
 
 ## Status
 
-Phase 0 scaffold, locally verified: the Fake golden path, adapter contracts,
-durable-intake seams, and privacy-safe projection are implemented. The durable
-pipeline, identity, actions, and public HTTP views land in later phases; live
-sponsor account gates are still blocked. See `docs/architecture.md` and
-`docs/evidence/phase0.md`.
+Phase 1 is locally verified: durable idempotent intake, a relational model with
+an Alembic migration, a lease-based job runner, strict extraction with a
+deterministic prompt-injection audit, gazetteer-first cached geocoding, and a
+one-round clarification flow. Matching, secure actions, the public map, and
+live sponsor credentials land in later phases. The live OpenAI, Nominatim, and
+Agentboxd account gates remain unproven. See `docs/architecture.md`,
+`docs/evidence/phase0.md`, and `docs/evidence/phase1.md`.
 
 ## Requirements
 
@@ -27,6 +29,7 @@ sponsor account gates are still blocked. See `docs/architecture.md` and
 ```bash
 cp .env.example .env
 uv sync --frozen
+uv run alembic upgrade head
 uv run uvicorn resilinet.main:app --reload
 curl -s localhost:8000/api/v1/health
 ```
