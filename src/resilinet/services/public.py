@@ -2,6 +2,8 @@
 
 Only explicitly listed fields leave the service. Sender addresses, provider
 message IDs, action tokens, and private notes have no representation here.
+This is the Phase 0/2 projection over ORM rows; Task 17 formalizes the
+versioned HTTP API around the same field discipline.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from .allocations import AllocationRecord, EntityRecord, NeedRecord, SupplyRecord
+from ..models import Allocation, Entity, Need, Supply
 
 
 def _iso(value: datetime) -> str:
@@ -32,10 +34,10 @@ def _coordinate(value: Decimal | None) -> float | None:
 def map_snapshot(
     *,
     incident_id: UUID,
-    entities: Sequence[EntityRecord],
-    needs: Sequence[NeedRecord],
-    supplies: Sequence[SupplyRecord],
-    allocations: Sequence[AllocationRecord],
+    entities: Sequence[Entity],
+    needs: Sequence[Need],
+    supplies: Sequence[Supply],
+    allocations: Sequence[Allocation],
     available_by_supply: Mapping[UUID, Decimal],
     generated_at: datetime,
 ) -> dict[str, Any]:
@@ -57,7 +59,7 @@ def map_snapshot(
             "entity_id": str(need.entity_id),
             "resource": need.resource.value,
             "quantity": _amount(need.quantity),
-            "unit": need.unit.value,
+            "unit": need.unit,
             "quantity_source": need.quantity_source.value,
             "headcount": need.headcount,
             "urgency": need.urgency.value,
@@ -76,7 +78,7 @@ def map_snapshot(
             "resource": supply.resource.value,
             "on_hand": _amount(supply.on_hand),
             "available": _amount(available_by_supply[supply.id]),
-            "unit": supply.unit.value,
+            "unit": supply.unit,
             "updated_at": _iso(supply.updated_at),
         }
         for supply in sorted(
@@ -92,7 +94,7 @@ def map_snapshot(
             "supply_id": str(allocation.supply_id),
             "resource": allocation.resource.value,
             "quantity": _amount(allocation.quantity),
-            "unit": allocation.unit.value,
+            "unit": allocation.unit,
             "distance_km": _amount(allocation.distance_km),
             "status": allocation.status.value,
             "updated_at": _iso(allocation.updated_at),

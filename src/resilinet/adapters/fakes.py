@@ -339,6 +339,8 @@ class FakeIntelligenceProvider:
 
     A fixture is selected by the first marker found in the message subject or
     body. Unmatched messages fail loudly; the fake never invents a report.
+    Critique verdicts are consumed from ``verdicts`` in order (the last one
+    repeats); ``verdict`` is shorthand for a single repeating verdict.
     """
 
     def __init__(
@@ -346,12 +348,20 @@ class FakeIntelligenceProvider:
         fixtures: Mapping[str, ParsedEmail],
         *,
         verdict: CriticVerdict | None = None,
+        verdicts: list[CriticVerdict] | None = None,
     ) -> None:
         if not fixtures:
             raise ValueError("at least one extraction fixture is required")
         self._fixtures = dict(fixtures)
-        self._verdict = verdict or CriticVerdict(verdict="approve")
+        if verdicts:
+            self._verdicts = list(verdicts)
+        elif verdict is not None:
+            self._verdicts = [verdict]
+        else:
+            self._verdicts = [CriticVerdict(verdict="approve")]
         self.fail_next_extract: AdapterError | None = None
+        self.fail_next_critique: AdapterError | None = None
+        self.critique_calls: list[CriticContext] = []
 
     async def extract(self, message: RawMessage) -> ParsedEmail:
         if self.fail_next_extract is not None:
@@ -365,7 +375,14 @@ class FakeIntelligenceProvider:
         raise ExtractionError("no deterministic extraction fixture matched")
 
     async def critique(self, proposal: CriticContext) -> CriticVerdict:
-        return self._verdict.model_copy(deep=True)
+        self.critique_calls.append(proposal)
+        if self.fail_next_critique is not None:
+            failure = self.fail_next_critique
+            self.fail_next_critique = None
+            raise failure
+        if len(self._verdicts) > 1:
+            return self._verdicts.pop(0).model_copy(deep=True)
+        return self._verdicts[0].model_copy(deep=True)
 
 
 class FakeGeocoder:

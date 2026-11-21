@@ -5,9 +5,6 @@ sender, enforce the persisted rolling rate limits, insert the message exactly
 once per ``(incident, provider_message_id)``, and enqueue durable work. Nothing
 here extracts, geocodes, matches, or mutates stock; those are worker jobs, so an
 intake retry can never repeat a domain change.
-
-``MemoryIngestionService`` is the Phase 0 slice's in-process idempotency store.
-It is deleted together with the synchronous pipeline when Phase 2 replaces it.
 """
 
 from __future__ import annotations
@@ -33,7 +30,7 @@ from ..models import (
     OutboundEmail,
     Sender,
 )
-from ..ports import InboundEvent, RawMessage
+from ..ports import InboundEvent
 from .events import record_event
 
 #: Persisted rolling limits from the P0 plan.
@@ -399,55 +396,12 @@ class IngestionService:
         return AcceptResult(duplicate=False, message_id=message.id, throttled=True)
 
 
-# -- Phase 0 slice -------------------------------------------------------------
-
-
-@dataclass(frozen=True, slots=True)
-class MemoryAcceptResult:
-    duplicate: bool
-    message_id: UUID
-
-
-class MemoryIngestionService:
-    """In-process idempotency for the Phase 0 synchronous slice.
-
-    Replaced by :class:`IngestionService` and removed with the slice in Phase 2.
-    """
-
-    def __init__(self, incident_id: UUID) -> None:
-        self._incident_id = incident_id
-        self._message_ids: dict[tuple[UUID, str], UUID] = {}
-        self._completed: set[UUID] = set()
-
-    async def accept(self, raw: RawMessage) -> MemoryAcceptResult:
-        key = (self._incident_id, raw.provider_message_id)
-        existing = self._message_ids.get(key)
-        if existing is not None:
-            return MemoryAcceptResult(
-                duplicate=existing in self._completed,
-                message_id=existing,
-            )
-        message_id = uuid4()
-        self._message_ids[key] = message_id
-        return MemoryAcceptResult(duplicate=False, message_id=message_id)
-
-    def complete(self, message_id: UUID) -> None:
-        """Mark a message's domain result as committed.
-
-        A message is only a duplicate once its result is cached and marked
-        complete, so a failure before the commit can be retried.
-        """
-        self._completed.add(message_id)
-
-
 __all__ = [
     "INCIDENT_LIMIT_PER_HOUR",
     "SENDER_LIMIT_PER_HOUR",
     "AcceptResult",
     "IngestionError",
     "IngestionService",
-    "MemoryAcceptResult",
-    "MemoryIngestionService",
     "normalize_address",
     "normalize_inbound_text",
     "normalize_subject",

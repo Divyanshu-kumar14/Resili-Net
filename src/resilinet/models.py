@@ -650,7 +650,10 @@ class OutboundEmail(UUIDPrimaryKey, Timestamped, Base):
     to_address: Mapped[str] = mapped_column(sa.String(320))
     subject: Mapped[str] = mapped_column(sa.String(500))
     body_text: Mapped[str] = mapped_column(sa.Text)
-    kind: Mapped[str] = mapped_column(sa.String(40))
+    kind: Mapped[str] = mapped_column(sa.String(120))
+    #: The incident mailbox a direct (non-reply) email is sent from; replies
+    #: take the mailbox from their inbound message instead.
+    mailbox_id: Mapped[str | None] = mapped_column(sa.String(200), nullable=True)
     idempotency_key: Mapped[str] = mapped_column(sa.String(160))
     status: Mapped[OutboundStatus] = mapped_column(
         enum_column(OutboundStatus, "outbound_status"), default=OutboundStatus.PENDING

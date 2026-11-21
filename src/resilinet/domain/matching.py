@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
+from uuid import UUID
 
 EARTH_RADIUS_KM = 6371.0088
 MAX_RADIUS_KM = Decimal("50")
@@ -66,3 +68,104 @@ def score_candidate(
         + FRESHNESS_WEIGHT * freshness
     )
     return score.quantize(Decimal("0.000001"))
+
+
+_QUANTUM = Decimal("0.001")
+
+
+@dataclass(frozen=True, slots=True)
+class NeedMatchView:
+    """The match-relevant projection of one need with its entity location."""
+
+    id: UUID
+    entity_lat: Decimal | None
+    entity_lon: Decimal | None
+    resource: str
+    unit: str
+    remaining: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class SupplyMatchView:
+    """The match-relevant projection of one supply with fresh availability."""
+
+    id: UUID
+    entity_lat: Decimal | None
+    entity_lon: Decimal | None
+    resource: str
+    unit: str
+    available: Decimal
+    updated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class AllocationDraft:
+    """One proposed reservation line; not yet a persisted allocation."""
+
+    need_id: UUID
+    supply_id: UUID
+    quantity: Decimal
+    distance_km: Decimal
+    score: Decimal
+
+
+def build_drafts(
+    needs: list[NeedMatchView],
+    supplies: list[SupplyMatchView],
+    now: datetime,
+) -> list[AllocationDraft]:
+    """Greedily draft reservations for pre-ranked needs.
+
+    Needs are processed in the caller's order (see
+    :func:`resilinet.domain.priority.rank_needs`); each need takes from its
+    best-scored candidates first. Only same-resource, same-unit,
+    positive-available candidates within ``MAX_RADIUS_KM`` are scored, and a
+    shared supply pool guarantees the drafts never exceed availability.
+    Quantities stay ``Decimal``; floats are used only inside the haversine.
+    """
+    pool = {supply.id: supply.available for supply in supplies}
+    drafts: list[AllocationDraft] = []
+    for need in needs:
+        if need.remaining <= 0 or need.entity_lat is None or need.entity_lon is None:
+            continue
+        remaining = need.remaining
+        scored: list[tuple[Decimal, SupplyMatchView, Decimal]] = []
+        for supply in supplies:
+            if supply.resource != need.resource or supply.unit != need.unit:
+                continue
+            available = pool[supply.id]
+            if available <= 0 or supply.entity_lat is None or supply.entity_lon is None:
+                continue
+            distance = haversine_km(
+                need.entity_lat, need.entity_lon, supply.entity_lat, supply.entity_lon
+            )
+            if distance > MAX_RADIUS_KM:
+                continue
+            score = score_candidate(
+                distance_km=distance,
+                available=available,
+                remaining_need=remaining,
+                freshness=freshness_factor(supply.updated_at, now),
+            )
+            scored.append((score, supply, distance))
+        scored.sort(key=lambda item: (-item[0], str(item[1].id)))
+        for score, supply, distance in scored:
+            if remaining <= 0:
+                break
+            quantity = min(remaining, pool[supply.id]).quantize(
+                _QUANTUM, rounding=ROUND_DOWN
+            )
+            if quantity <= 0:
+                continue
+            drafts.append(
+                AllocationDraft(
+                    need_id=need.id,
+                    supply_id=supply.id,
+                    quantity=quantity,
+                    distance_km=distance,
+                    score=score,
+                )
+            )
+            pool[supply.id] -= quantity
+            remaining -= quantity
+    return drafts

@@ -18,7 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..db import utcnow
 from ..domain.quantities import Quantity, format_quantity
-from ..models import Message, OutboundEmail, OutboundStatus, Sender
+from ..models import (
+    Message,
+    OutboundEmail,
+    OutboundStatus,
+    ReviewCase,
+    ReviewCaseKind,
+    ReviewStatus,
+    Sender,
+)
 from ..ports import InboxProvider, OutboundDraft, ProviderUnavailableError, RawMessage
 from ..schemas import Resource
 from .events import record_event
@@ -200,6 +208,156 @@ class NotificationService:
         )
         return _reply_to(message, body)
 
+    # -- durable pipeline texts (Task 12) -------------------------------------
+
+    def confirm_request_text(
+        self,
+        *,
+        allocation_ref: str,
+        need_ref: str,
+        supply_entity: str,
+        need_entity: str,
+        quantity_label: str,
+        resource_label: str,
+        action_url: str,
+    ) -> str:
+        return (
+            f"You coordinate stock for {supply_entity}.\n\n"
+            f"ResiliNet recommends allocating {quantity_label} of "
+            f"{resource_label} to {need_entity} (need {need_ref}, allocation "
+            f"{allocation_ref}). This is a recommendation, not a dispatch.\n\n"
+            f"To confirm this allocation, open your private link within 30 "
+            f"minutes and submit the confirmation form:\n{action_url}\n\n"
+            "The link works once and only for you. Confirming commits the "
+            "stock; it does not report a delivery. If you did not expect "
+            "this message, do not open the link and tell an operator."
+        )
+
+    def operator_review_text(self, *, review_url: str) -> str:
+        return (
+            "A relief report needs operator review before any stock can be "
+            "committed.\n\n"
+            f"Open the review queue: {review_url}\n\n"
+            "Signing in is required. This message contains no action link "
+            "and cannot change any stock or allocation."
+        )
+
+    def duplicate_corroboration_text(
+        self, *, need_ref: str, entity_name: str, resource_label: str
+    ) -> str:
+        return (
+            f"We received your report for {entity_name}. It matches an "
+            f"existing open request for {resource_label} (reference "
+            f"{need_ref}), so it was recorded as corroboration. The "
+            "existing quantity was not changed.\n\n"
+            f'Reply "QUERY STATUS {need_ref}" for an update.'
+        )
+
+    def quantity_review_text(self, *, resource_labels: list[str]) -> str:
+        resources = ", ".join(resource_labels)
+        return (
+            f"We received your report, but the quantity for {resources} "
+            "could not be accepted as stated. That part of your report was "
+            "not applied, and a coordinator will review it. Any other part "
+            "of your report is handled separately in its own reply. "
+            "Quantities are never guessed or reduced silently."
+        )
+
+    def medical_review_text(self) -> str:
+        return (
+            "We received your report. Because it includes medical needs, a "
+            "coordinator must review it before any medicine or first aid "
+            "can be promised. No stock has been reserved for the medical "
+            "items, and this message is not a supply promise. Medical "
+            "reports are given scheduling priority for review."
+        )
+
+    def allocation_cancelled_text(
+        self, *, allocation_ref: str, need_ref: str
+    ) -> str:
+        return (
+            f"An earlier recommendation (allocation {allocation_ref}) for "
+            f"need {need_ref} was cancelled because the available stock "
+            "changed. The need remains open and will be matched again when "
+            "stock is available. No goods were dispatched or delivered."
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RecommendationText:
+    """One pre-formatted recommendation line for the durable pipeline."""
+
+    need_ref: str
+    entity_name: str
+    resource_label: str
+    quantity_label: str
+    allocation_ref: str | None = None
+    supply_name: str | None = None
+    distance_km: Decimal | None = None
+    requested_label: str | None = None
+    estimated: bool = False
+    headcount: int | None = None
+
+
+def recommendation_body(lines: list[RecommendationText], *, unverified: bool) -> str:
+    """Plain-language recommendation text shared by every reply path."""
+    body: list[str] = []
+    for line in lines:
+        body.append(f"We received your report for {line.entity_name}.")
+        body.append("")
+        if line.allocation_ref and line.supply_name:
+            distance = (
+                f" (approx. {line.distance_km.quantize(Decimal('0.1'))} km away)"
+                if line.distance_km is not None
+                else ""
+            )
+            body.append(f"Reference: {line.need_ref} (allocation {line.allocation_ref})")
+            body.append(
+                f"Recommended: {line.supply_name} is recommended to supply "
+                f"{line.quantity_label} of {line.resource_label}{distance}."
+            )
+            if line.requested_label is not None:
+                body.append(
+                    f"This is a partial match for the {line.requested_label} "
+                    "requested; the remainder stays open."
+                )
+            body.append(
+                "This is a proposal, not a shipment or a dispatch. A depot "
+                "coordinator must confirm it before stock is committed."
+            )
+        else:
+            body.append(f"Reference: {line.need_ref}")
+            body.append(
+                f"No stock is currently reserved for {line.quantity_label} of "
+                f"{line.resource_label}. The need remains open for matching."
+            )
+        if line.estimated:
+            body.append(
+                f"Quantity: {line.quantity_label} of {line.resource_label}, "
+                f"estimated from {line.headcount or 0} people using planning "
+                "rates for one day."
+            )
+        body.append(f'Reply "QUERY STATUS {line.need_ref}" for an update.')
+        body.append("")
+    if unverified:
+        body.append(
+            "Your sender address is not verified yet. Verification upgrades "
+            "trust but does not change this recommendation."
+        )
+    return "\n".join(body).strip()
+
+
+def stock_body(entity_name: str, display_lines: list[str]) -> str:
+    """Stock acknowledgement text for a recorded absolute snapshot."""
+    body = [f"Stock recorded for {entity_name}."]
+    body.extend(f"- {line} on hand" for line in display_lines)
+    body.append("")
+    body.append(
+        "This is an absolute on-hand snapshot. Reservations are tracked "
+        "separately and do not reduce the reported on-hand figure."
+    )
+    return "\n".join(body)
+
 
 class OutboxService:
     """Durable outbound email queued in the caller's transaction.
@@ -258,6 +416,37 @@ class OutboxService:
         await session.flush()
         return row
 
+    @staticmethod
+    async def enqueue_direct(
+        session: AsyncSession,
+        *,
+        incident_id: UUID,
+        recipient: Sender,
+        mailbox_id: str,
+        subject: str,
+        body: str,
+        kind: str,
+        available_at: datetime | None = None,
+    ) -> OutboundEmail:
+        """Queue a non-reply email (e.g. a coordinator action request)."""
+        outbox_id = uuid4()
+        row = OutboundEmail(
+            id=outbox_id,
+            incident_id=incident_id,
+            message_id=None,
+            sender_id=recipient.id,
+            to_address=recipient.address,
+            subject=subject,
+            body_text=body,
+            kind=kind,
+            mailbox_id=mailbox_id,
+            idempotency_key=f"outbox:{outbox_id}",
+            available_at=available_at or utcnow(),
+        )
+        session.add(row)
+        await session.flush()
+        return row
+
     async def deliver_due(self) -> bool:
         """Deliver the oldest due outbox row. Returns False when none is due.
 
@@ -294,7 +483,11 @@ class OutboxService:
             return False
         row, message = claim
         draft = OutboundDraft(
-            mailbox_id=message.mailbox_id if message is not None else "",
+            mailbox_id=(
+                message.mailbox_id
+                if message is not None
+                else row.mailbox_id or ""
+            ),
             to=row.to_address,
             subject=row.subject,
             text=row.body_text,
@@ -347,6 +540,24 @@ class OutboxService:
                 row.status = OutboundStatus.FAILED
                 row.last_error = "delivery lease expired after the final attempt"
                 row.updated_at = now
+                # Same operator visibility as the exception path: a crashed
+                # worker's undelivered email must reach the review queue.
+                session.add(
+                    ReviewCase(
+                        id=uuid4(),
+                        incident_id=row.incident_id,
+                        kind=ReviewCaseKind.OTHER,
+                        status=ReviewStatus.OPEN,
+                        source_message_id=row.message_id,
+                        reason="outbound email delivery failed permanently",
+                        payload={
+                            "outbox_id": str(row.id),
+                            "kind": row.kind,
+                            "error_type": "LeaseExpired",
+                        },
+                    )
+                )
+                await session.flush()
                 await record_event(
                     session,
                     incident_id=row.incident_id,
@@ -406,6 +617,26 @@ class OutboxService:
             if can_retry:
                 delay = self._retry_base_seconds * (2 ** (row.attempt_count - 1))
                 row.available_at = self._clock() + timedelta(seconds=delay)
+            else:
+                # A permanently failed notification becomes an operator
+                # review case: the participant impact is visible in the
+                # queue instead of disappearing into a log line.
+                session.add(
+                    ReviewCase(
+                        id=uuid4(),
+                        incident_id=row.incident_id,
+                        kind=ReviewCaseKind.OTHER,
+                        status=ReviewStatus.OPEN,
+                        source_message_id=row.message_id,
+                        reason="outbound email delivery failed permanently",
+                        payload={
+                            "outbox_id": str(row.id),
+                            "kind": row.kind,
+                            "error_type": error_type,
+                        },
+                    )
+                )
+                await session.flush()
             await record_event(
                 session,
                 incident_id=row.incident_id,

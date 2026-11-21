@@ -1,36 +1,64 @@
-"""Allocation ledger for the Phase 0 vertical slice.
+"""Allocation ledgers: the Phase 0 in-memory slice and its durable replacement.
 
-The durable implementation (Task 10) replaces the dictionaries with locked
-database rows. The invariants encoded here are the ones that implementation
-must preserve: available stock is never negative, reservations are active
-while proposed or confirmed, and a need is never persisted below its delivered
-total.
+The durable :class:`AllocationService` (Task 10) persists locked database
+rows and preserves the invariants the slice encoded: available stock is
+never negative, reservations are active while proposed or confirmed, and a
+need is never persisted below its delivered total. Every stock mutation
+locks its aggregate rows in a deterministic order, recomputes availability
+from committed rows, writes audit events, and never trusts stale scores.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from uuid import UUID, uuid4
 
-from ..domain.matching import (
-    MAX_RADIUS_KM,
-    freshness_factor,
-    haversine_km,
-    score_candidate,
+import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..domain.duplicates import (
+    DuplicateDecision,
+    DuplicateKind,
+    DuplicateNeedView,
+    find_duplicate,
 )
-from ..domain.quantities import CanonicalUnit, Quantity, QuantitySource
-from ..domain.references import ReferenceSequence
+from ..domain.lifecycle import (
+    AllocationQuantities,
+    can_transition,
+    delivered_total,
+    derive_need_status,
+    reserved_remaining,
+)
+from ..domain.matching import (
+    AllocationDraft,
+    NeedMatchView,
+    SupplyMatchView,
+    build_drafts,
+)
+from ..domain.priority import NeedPriorityView, rank_needs
+from ..domain.quantities import (
+    QuantityError,
+    QuantitySource,
+    canonical_unit,
+    estimate_need,
+    to_canonical,
+    to_stated,
+)
+from ..domain.references import new_reference, parse_reference
+from ..models import Allocation, Entity, Message, Need, Sender, Supply
 from ..schemas import (
     AllocationStatus,
-    EntityType,
-    GeoConfidence,
     NeedStatus,
+    ParsedEmail,
+    ParsedReport,
+    ReportKind,
     Resource,
     Urgency,
 )
+from .events import record_event
 
 ACTIVE_ALLOCATION_STATUSES = frozenset(
     {AllocationStatus.PROPOSED, AllocationStatus.CONFIRMED}
@@ -41,209 +69,127 @@ class AvailabilityError(ValueError):
     """An operation would make a stock invariant negative."""
 
 
-@dataclass(frozen=True, slots=True)
-class EntityRecord:
-    id: UUID
-    name: str
-    entity_type: EntityType
-    lat: Decimal | None
-    lon: Decimal | None
-    geo_confidence: GeoConfidence
-    location_text: str | None
+# -- durable transactional engine (Task 10) -------------------------------------
+
+_QUANTUM = Decimal("0.001")
+
+
+class AllocationStateError(ValueError):
+    """A lifecycle transition or delivery quantity is not legal."""
 
 
 @dataclass(frozen=True, slots=True)
-class NeedRecord:
-    id: UUID
-    ref: str
-    entity_id: UUID
-    resource: Resource
+class CommitResult:
+    allocations: tuple[Allocation, ...]
     quantity: Decimal
-    unit: CanonicalUnit
-    quantity_source: QuantitySource
-    headcount: int | None
-    urgency: Urgency
-    status: NeedStatus
-    verified: bool
-    needs_human_review: bool
-    created_at: datetime
-    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class SupplyRecord:
-    id: UUID
-    entity_id: UUID
-    resource: Resource
-    on_hand: Decimal
-    unit: CanonicalUnit
-    updated_at: datetime
+class SnapshotResult:
+    supply: Supply
+    cancelled: tuple[Allocation, ...]
 
 
 @dataclass(frozen=True, slots=True)
-class AllocationRecord:
-    id: UUID
-    ref: str
-    need_id: UUID
-    supply_id: UUID
+class RegistrationFailure:
+    report_id: UUID
     resource: Resource
-    quantity: Decimal
-    unit: CanonicalUnit
-    delivered_quantity: Decimal
-    distance_km: Decimal
-    status: AllocationStatus
-    critic_verdict: str
-    created_at: datetime
-    updated_at: datetime
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicateCandidateHit:
+    need: Need
+    existing_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class RegistrationResult:
+    created_needs: tuple[Need, ...]
+    corroborated: tuple[Need, ...]
+    duplicate_candidates: tuple[DuplicateCandidateHit, ...]
+    snapshots: tuple[SnapshotResult, ...]
+    failures: tuple[RegistrationFailure, ...]
+    #: Corroborating reports that were themselves medical: the existing need
+    #: still needs a medical review case even though no new need was created.
+    medical_corroborated: tuple[Need, ...] = ()
+
+
+def _quantities(rows: Sequence[Allocation]) -> list[AllocationQuantities]:
+    return [
+        AllocationQuantities(
+            quantity=row.quantity,
+            delivered_quantity=row.delivered_quantity,
+            status=row.status,
+        )
+        for row in rows
+    ]
+
+
+def _ref_number(ref: str) -> int:
+    try:
+        return parse_reference(ref)[1]
+    except Exception:
+        return 0
+
+
+def _newest_first(rows: Sequence[Allocation]) -> list[Allocation]:
+    return sorted(rows, key=lambda row: (row.created_at, _ref_number(row.ref)), reverse=True)
+
+
+def _cancellation_order(rows: Sequence[Allocation]) -> list[Allocation]:
+    """Newest proposals first, then newest confirmed allocations."""
+    active = [row for row in rows if row.status in (AllocationStatus.PROPOSED, AllocationStatus.CONFIRMED)]
+    proposals = _newest_first(
+        [row for row in active if row.status is AllocationStatus.PROPOSED]
+    )
+    confirmed = _newest_first(
+        [row for row in active if row.status is AllocationStatus.CONFIRMED]
+    )
+    return proposals + confirmed
 
 
 class AllocationService:
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], datetime] | None = None,
-        references: ReferenceSequence | None = None,
-        max_radius_km: Decimal = MAX_RADIUS_KM,
-    ) -> None:
+    """Durable, transactional reservation engine.
+
+    All methods run inside the caller's transaction. Reservation commits lock
+    the need and candidate supply rows in sorted ID order, recompute
+    availability from committed rows, and write allocations, events, and
+    status changes atomically — never reserving from stale scores. Role and
+    token authorization are enforced by the action layer (Phase 3) inside
+    these same transactions; this service enforces state, quantity, and
+    stock invariants.
+    """
+
+    def __init__(self, *, clock: Callable[[], datetime] | None = None) -> None:
         self._clock = clock or (lambda: datetime.now(UTC))
-        self._references = references or ReferenceSequence()
-        self._max_radius_km = max_radius_km
-        self._entities: dict[UUID, EntityRecord] = {}
-        self._entity_by_name: dict[str, UUID] = {}
-        self._needs: dict[UUID, NeedRecord] = {}
-        self._supplies: dict[UUID, SupplyRecord] = {}
-        self._supply_by_key: dict[tuple[UUID, Resource], UUID] = {}
-        self._allocations: dict[UUID, AllocationRecord] = {}
 
-    # -- entities ---------------------------------------------------------
+    # -- reads --------------------------------------------------------------
 
-    def upsert_entity(
-        self,
-        *,
-        name: str,
-        entity_type: EntityType,
-        lat: Decimal | None,
-        lon: Decimal | None,
-        geo_confidence: GeoConfidence,
-        location_text: str | None,
-    ) -> EntityRecord:
-        clean_name = name.strip()
-        if not clean_name:
-            raise ValueError("entity name is required")
-        key = clean_name.casefold()
-        existing_id = self._entity_by_name.get(key)
-        if existing_id is not None:
-            existing = self._entities[existing_id]
-            # An email may fill in a missing location, but it must never move or
-            # re-type an existing pin. Conflicting reports are ignored here;
-            # Task 9's duplicate/reconciliation rules own review escalation.
-            updated = replace(
-                existing,
-                lat=existing.lat if existing.lat is not None else lat,
-                lon=existing.lon if existing.lon is not None else lon,
-                geo_confidence=(
-                    existing.geo_confidence
-                    if existing.geo_confidence is not GeoConfidence.NONE
-                    else geo_confidence
-                ),
-                location_text=existing.location_text or location_text,
-            )
-            self._entities[existing_id] = updated
-            return updated
-        entity = EntityRecord(
-            id=uuid4(),
-            name=clean_name,
-            entity_type=entity_type,
-            lat=lat,
-            lon=lon,
-            geo_confidence=geo_confidence,
-            location_text=location_text,
+    async def allocations_for_need(
+        self, session: AsyncSession, need_id: UUID
+    ) -> list[Allocation]:
+        rows = await session.scalars(
+            sa.select(Allocation)
+            .where(Allocation.need_id == need_id)
+            .order_by(Allocation.created_at, Allocation.ref)
         )
-        self._entities[entity.id] = entity
-        self._entity_by_name[key] = entity.id
-        return entity
+        return list(rows)
 
-    def entity(self, entity_id: UUID) -> EntityRecord:
-        return self._entities[entity_id]
-
-    # -- supplies ---------------------------------------------------------
-
-    def check_snapshot(
-        self,
-        *,
-        entity_id: UUID,
-        resource: Resource,
-        amount: Decimal,
-    ) -> None:
-        """Reject a snapshot that cannot support existing reservations.
-
-        Validation is separated from the write so a compound message can be
-        checked in full before any row changes.
-        """
-        existing_id = self._supply_by_key.get((entity_id, resource))
-        if existing_id is None:
-            return
-        reserved = sum(
-            (
-                allocation.quantity - allocation.delivered_quantity
-                for allocation in self._allocations.values()
-                if allocation.supply_id == existing_id
-                and allocation.status in ACTIVE_ALLOCATION_STATUSES
-            ),
-            Decimal("0"),
+    async def allocations_for_supply(
+        self, session: AsyncSession, supply_id: UUID
+    ) -> list[Allocation]:
+        rows = await session.scalars(
+            sa.select(Allocation)
+            .where(Allocation.supply_id == supply_id)
+            .order_by(Allocation.created_at, Allocation.ref)
         )
-        if amount < reserved:
-            raise AvailabilityError(
-                f"snapshot of {amount} cannot support {reserved} reserved"
-            )
+        return list(rows)
 
-    def upsert_supply(
-        self,
-        *,
-        entity_id: UUID,
-        resource: Resource,
-        quantity: Quantity,
-        now: datetime | None = None,
-    ) -> SupplyRecord:
-        """Store an absolute on-hand snapshot for (entity, resource)."""
-        supplied_at = now or self._clock()
-        key = (entity_id, resource)
-        existing_id = self._supply_by_key.get(key)
-        self.check_snapshot(entity_id=entity_id, resource=resource, amount=quantity.amount)
-        if existing_id is not None:
-            updated = replace(
-                self._supplies[existing_id],
-                on_hand=quantity.amount,
-                unit=quantity.unit,
-                updated_at=supplied_at,
-            )
-            self._supplies[existing_id] = updated
-            return updated
-        supply = SupplyRecord(
-            id=uuid4(),
-            entity_id=entity_id,
-            resource=resource,
-            on_hand=quantity.amount,
-            unit=quantity.unit,
-            updated_at=supplied_at,
-        )
-        self._supplies[supply.id] = supply
-        self._supply_by_key[key] = supply.id
-        return supply
-
-    def supply(self, supply_id: UUID) -> SupplyRecord:
-        return self._supplies[supply_id]
-
-    def available(self, supply_id: UUID) -> Decimal:
-        supply = self._supplies[supply_id]
-        reserved = sum(
-            (
-                allocation.quantity - allocation.delivered_quantity
-                for allocation in self._allocations.values()
-                if allocation.supply_id == supply_id
-                and allocation.status in ACTIVE_ALLOCATION_STATUSES
-            ),
-            Decimal("0"),
+    async def available(self, session: AsyncSession, supply: Supply) -> Decimal:
+        """On-hand minus actively reserved; a negative result is an error."""
+        reserved = reserved_remaining(
+            _quantities(await self.allocations_for_supply(session, supply.id))
         )
         available = supply.on_hand - reserved
         if available < 0:
@@ -252,172 +198,905 @@ class AllocationService:
             )
         return available
 
-    # -- needs and proposals ---------------------------------------------
+    async def remaining_for_need(self, session: AsyncSession, need: Need) -> Decimal:
+        rows = _quantities(await self.allocations_for_need(session, need.id))
+        delivered = delivered_total(rows)
+        reserved = reserved_remaining(rows)
+        remaining = need.quantity - delivered - reserved
+        if remaining < 0:
+            raise AvailabilityError(f"need {need.ref} is over-reserved")
+        return remaining
 
-    def create_need(
+    # -- need creation --------------------------------------------------------
+
+    async def create_need(
         self,
+        session: AsyncSession,
         *,
+        incident_id: UUID,
         entity_id: UUID,
         resource: Resource,
-        quantity: Quantity,
+        quantity: Decimal,
+        unit: str,
+        quantity_source: QuantitySource,
         headcount: int | None,
         urgency: Urgency,
         verified: bool,
-        needs_human_review: bool,
-        now: datetime | None = None,
-    ) -> NeedRecord:
-        if quantity.amount <= 0:
-            raise ValueError("need quantity must be positive")
-        created_at = now or self._clock()
-        need = NeedRecord(
+        needs_human_review: bool = False,
+        source_report_id: UUID | None = None,
+        actor_id: UUID | None = None,
+    ) -> Need:
+        quantity = quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+        if quantity <= 0:
+            raise AllocationStateError(
+                "need quantity must be at least 0.001 in canonical resolution"
+            )
+        now = self._clock()
+        need = Need(
             id=uuid4(),
-            ref=self._references.next("RN"),
+            incident_id=incident_id,
             entity_id=entity_id,
+            source_report_id=source_report_id,
+            ref=await new_reference(session, "RN"),
             resource=resource,
-            quantity=quantity.amount,
-            unit=quantity.unit,
-            quantity_source=quantity.source,
+            quantity=quantity.quantize(_QUANTUM, rounding=ROUND_DOWN),
+            unit=unit,
+            quantity_source=quantity_source,
             headcount=headcount,
             urgency=urgency,
             status=NeedStatus.OPEN,
             verified=verified,
             needs_human_review=needs_human_review,
-            created_at=created_at,
-            updated_at=created_at,
+            created_at=now,
+            updated_at=now,
         )
-        self._needs[need.id] = need
+        session.add(need)
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=incident_id,
+            event_type="need.created",
+            actor_id=actor_id,
+            aggregate_type="need",
+            aggregate_id=need.id,
+            payload={
+                "need_ref": need.ref,
+                "resource": resource.value,
+                "quantity": str(need.quantity),
+                "unit": unit,
+                "quantity_source": quantity_source.value,
+                "report_id": str(source_report_id) if source_report_id else None,
+            },
+        )
         return need
 
-    def need(self, need_id: UUID) -> NeedRecord:
-        return self._needs[need_id]
+    # -- report registration ----------------------------------------------------
 
-    def propose(self, need_id: UUID) -> tuple[AllocationRecord, ...]:
-        """Greedily reserve the residual need, then update the need status."""
-        need = self._needs[need_id]
-        need_entity = self._entities[need.entity_id]
+    async def register_reports(
+        self,
+        session: AsyncSession,
+        *,
+        message: Message,
+        sender: Sender,
+        parsed: ParsedEmail,
+        entity_id: UUID | None,
+        report_ids: Sequence[UUID],
+        medical_flags: Sequence[bool] = (),
+    ) -> RegistrationResult:
+        """Turn persisted reports into needs and supply snapshots.
+
+        Quantities are canonicalized here (or kept as stated units for
+        resources without a canonical unit); a line that cannot be accepted
+        becomes a registration failure for a review case rather than a
+        clamped value. A strong duplicate corroborates the existing need
+        without overwriting its quantity; a proximity-only candidate still
+        creates its need and is reported for operator review.
+        """
+        created: list[Need] = []
+        corroborated: list[Need] = []
+        medical_corroborated: list[Need] = []
+        candidates: list[DuplicateCandidateHit] = []
+        snapshots: list[SnapshotResult] = []
+        failures: list[RegistrationFailure] = []
+        seen_supply_keys: set[tuple[UUID, Resource]] = set()
+        if entity_id is None:
+            return RegistrationResult((), (), (), (), ())
+        entity = await session.get(Entity, entity_id)
+        if entity is None:  # pragma: no cover - persistence guarantees the row
+            return RegistrationResult((), (), (), (), ())
+
+        for index, report in enumerate(parsed.reports):
+            report_id = report_ids[index] if index < len(report_ids) else None
+            medical = medical_flags[index] if index < len(medical_flags) else False
+            if parsed.context.kind is ReportKind.SUPPLY:
+                try:
+                    amount, unit = self._supply_quantity(report)
+                except QuantityError as exc:
+                    if report_id is not None:
+                        failures.append(
+                            RegistrationFailure(report_id, report.resource, str(exc))
+                        )
+                    continue
+                supply_key = (entity.id, report.resource)
+                if supply_key in seen_supply_keys:
+                    # One absolute snapshot per (entity, resource) per
+                    # message; a second line cannot silently overwrite it.
+                    if report_id is not None:
+                        failures.append(
+                            RegistrationFailure(
+                                report_id,
+                                report.resource,
+                                "duplicate supply line for one entity in a "
+                                "single message",
+                            )
+                        )
+                    continue
+                seen_supply_keys.add(supply_key)
+                try:
+                    snapshots.append(
+                        await self.apply_supply_snapshot(
+                            session,
+                            incident_id=message.incident_id,
+                            entity_id=entity.id,
+                            resource=report.resource,
+                            quantity=amount,
+                            unit=unit,
+                            source_report_id=report_id,
+                            actor_id=sender.id,
+                        )
+                    )
+                except AvailabilityError as exc:
+                    if report_id is not None:
+                        failures.append(
+                            RegistrationFailure(report_id, report.resource, str(exc))
+                        )
+                continue
+
+            if report_id is not None:
+                # A retried job re-registers nothing: the need this report
+                # already produced is returned for (idempotent) matching.
+                existing_need = await session.scalar(
+                    sa.select(Need).where(Need.source_report_id == report_id)
+                )
+                if existing_need is not None:
+                    created.append(existing_need)
+                    continue
+            try:
+                amount, unit, source = self._need_quantity(
+                    report, parsed.context.headcount
+                )
+            except QuantityError as exc:
+                if report_id is not None:
+                    failures.append(
+                        RegistrationFailure(report_id, report.resource, str(exc))
+                    )
+                continue
+            decision = await self._find_duplicate(
+                session, message.incident_id, entity, report, unit
+            )
+            if decision.kind is DuplicateKind.DUPLICATE and decision.existing_id is not None:
+                existing = await session.get(Need, decision.existing_id)
+                if existing is not None:
+                    corroborated.append(existing)
+                    if medical:
+                        medical_corroborated.append(existing)
+                    await record_event(
+                        session,
+                        incident_id=message.incident_id,
+                        event_type="need.corroborated",
+                        actor_id=sender.id,
+                        aggregate_type="need",
+                        aggregate_id=existing.id,
+                        payload={
+                            "need_ref": existing.ref,
+                            "report_id": str(report_id) if report_id else None,
+                        },
+                    )
+                    continue
+            need = await self.create_need(
+                session,
+                incident_id=message.incident_id,
+                entity_id=entity.id,
+                resource=report.resource,
+                quantity=amount,
+                unit=unit,
+                quantity_source=source,
+                headcount=parsed.context.headcount,
+                urgency=parsed.context.urgency,
+                verified=sender.verified,
+                needs_human_review=medical,
+                source_report_id=report_id,
+                actor_id=sender.id,
+            )
+            created.append(need)
+            if decision.kind is DuplicateKind.REVIEW_CANDIDATE and decision.existing_id is not None:
+                candidates.append(
+                    DuplicateCandidateHit(need=need, existing_id=decision.existing_id)
+                )
+        return RegistrationResult(
+            created_needs=tuple(created),
+            corroborated=tuple(corroborated),
+            duplicate_candidates=tuple(candidates),
+            snapshots=tuple(snapshots),
+            failures=tuple(failures),
+            medical_corroborated=tuple(medical_corroborated),
+        )
+
+    def _need_quantity(
+        self, report: ParsedReport, headcount: int | None
+    ) -> tuple[Decimal, str, QuantitySource]:
+        """Resolve a NEED line: stated canonical, stated raw, or an estimate."""
+        if canonical_unit(report.resource) is not None:
+            if report.quantity is None or report.quantity == 0:
+                estimated = estimate_need(report.resource, headcount)
+                if estimated is None:
+                    raise QuantityError(
+                        "quantity is missing and cannot be estimated"
+                    )
+                return estimated.amount, estimated.unit.value, QuantitySource.ESTIMATED
+            converted = to_canonical(report.resource, report.quantity, report.unit)
+            return converted.amount, converted.unit.value, QuantitySource.STATED
+        if report.quantity is None or report.quantity == 0:
+            raise QuantityError("quantity is missing")
+        stated = to_stated(report.resource, report.quantity, report.unit)
+        return stated.amount, stated.unit, QuantitySource.STATED
+
+    def _supply_quantity(self, report: ParsedReport) -> tuple[Decimal, str]:
+        """Resolve a SUPPLY line; zero is a valid empty snapshot."""
+        if report.quantity is None:
+            raise QuantityError("quantity is missing")
+        if canonical_unit(report.resource) is not None:
+            converted = to_canonical(report.resource, report.quantity, report.unit)
+            return converted.amount, converted.unit.value
+        stated = to_stated(report.resource, report.quantity, report.unit)
+        return stated.amount, stated.unit
+
+    async def _find_duplicate(
+        self,
+        session: AsyncSession,
+        incident_id: UUID,
+        entity: Entity,
+        report: ParsedReport,
+        unit: str,
+    ) -> DuplicateDecision:
+        rows = await session.execute(
+            sa.select(Need, Entity)
+            .join(Entity, Entity.id == Need.entity_id)
+            .where(Need.incident_id == incident_id)
+        )
+        views = [
+            DuplicateNeedView(
+                need_id=need.id,
+                entity_id=need.entity_id,
+                entity_name=owner.name,
+                resource=need.resource.value,
+                unit=need.unit,
+                lat=owner.lat,
+                lon=owner.lon,
+                status=need.status,
+                created_at=need.created_at,
+            )
+            for need, owner in rows
+        ]
+        incoming = DuplicateNeedView(
+            need_id=uuid4(),
+            entity_id=entity.id,
+            entity_name=entity.name,
+            resource=report.resource.value,
+            unit=unit,
+            lat=entity.lat,
+            lon=entity.lon,
+            status=NeedStatus.OPEN,
+            created_at=self._clock(),
+        )
+        return find_duplicate(incoming, views, self._clock())
+
+    # -- matching snapshots -----------------------------------------------------
+
+    async def drafts_for_need(
+        self, session: AsyncSession, need_id: UUID, now: datetime
+    ) -> list[AllocationDraft]:
+        need = await session.get(Need, need_id)
+        if need is None:
+            raise AllocationStateError(f"need {need_id} does not exist")
+        entity = await session.get(Entity, need.entity_id)
+        if entity is None:  # pragma: no cover - FK guarantees the row
+            return []
+        remaining = await self.remaining_for_need(session, need)
+        need_view = NeedMatchView(
+            id=need.id,
+            entity_lat=entity.lat,
+            entity_lon=entity.lon,
+            resource=need.resource.value,
+            unit=need.unit,
+            remaining=remaining,
+        )
+        return build_drafts([need_view], await self.supply_views(session, need), now)
+
+    async def supply_views(
+        self, session: AsyncSession, need: Need
+    ) -> list[SupplyMatchView]:
+        rows = await session.execute(
+            sa.select(Supply, Entity)
+            .join(Entity, Entity.id == Supply.entity_id)
+            .where(
+                Supply.incident_id == need.incident_id,
+                Supply.resource == need.resource,
+            )
+        )
+        views: list[SupplyMatchView] = []
+        for supply, owner in rows:
+            views.append(
+                SupplyMatchView(
+                    id=supply.id,
+                    entity_lat=owner.lat,
+                    entity_lon=owner.lon,
+                    resource=supply.resource.value,
+                    unit=supply.unit,
+                    available=await self.available(session, supply),
+                    updated_at=supply.updated_at,
+                )
+            )
+        return views
+
+    async def ranked_open_needs(
+        self, session: AsyncSession, incident_id: UUID, resource: Resource, now: datetime
+    ) -> list[Need]:
+        """Open, matchable needs for one resource in deterministic priority order."""
+        rows = list(
+            await session.scalars(
+                sa.select(Need).where(
+                    Need.incident_id == incident_id,
+                    Need.resource == resource,
+                    Need.status.in_((NeedStatus.OPEN, NeedStatus.PARTIAL)),
+                    Need.needs_human_review.is_(False),
+                )
+            )
+        )
+        matchable: list[Need] = []
+        for need in rows:
+            if await self.remaining_for_need(session, need) > 0:
+                matchable.append(need)
+        ranked = rank_needs(
+            [
+                NeedPriorityView(
+                    id=need.id,
+                    urgency=need.urgency,
+                    headcount=need.headcount,
+                    created_at=need.created_at,
+                    verified=need.verified,
+                    is_medical=need.needs_human_review,
+                )
+                for need in matchable
+            ],
+            now,
+        )
+        by_id = {need.id: need for need in matchable}
+        return [by_id[view.id] for view in ranked]
+
+    # -- reservation commit -------------------------------------------------------
+
+    async def commit(
+        self,
+        session: AsyncSession,
+        *,
+        need_id: UUID,
+        drafts: Sequence[AllocationDraft],
+        critic_verdict: str,
+        actor_id: UUID | None = None,
+    ) -> CommitResult:
+        """Commit approved drafts under row locks with fresh availability.
+
+        Drafts are advisory: locked rows are re-read, a draft whose supply no
+        longer matches the need's resource/unit is rejected, and quantities
+        are capped by fresh remaining need and fresh availability so stock
+        can never be over-reserved.
+        """
         now = self._clock()
-
-        delivered_total = sum(
-            (
-                allocation.delivered_quantity
-                for allocation in self._allocations.values()
-                if allocation.need_id == need_id
-                and allocation.status is not AllocationStatus.REJECTED
-            ),
-            Decimal("0"),
-        )
-        reserved_remaining = sum(
-            (
-                allocation.quantity - allocation.delivered_quantity
-                for allocation in self._allocations.values()
-                if allocation.need_id == need_id
-                and allocation.status in ACTIVE_ALLOCATION_STATUSES
-            ),
-            Decimal("0"),
-        )
-        remaining = need.quantity - delivered_total - reserved_remaining
-        if remaining < 0:
-            raise AvailabilityError(f"need {need.ref} is over-reserved")
-        if remaining == 0:
-            if delivered_total >= need.quantity:
-                status = NeedStatus.FULFILLED
-            elif delivered_total > 0:
-                status = NeedStatus.PARTIAL
-            elif reserved_remaining >= need.quantity:
-                status = NeedStatus.MATCHED
-            elif reserved_remaining > 0:
-                status = NeedStatus.PARTIAL
-            else:
-                status = NeedStatus.OPEN
-            self._needs[need.id] = replace(need, status=status, updated_at=now)
-            return tuple(
-                allocation
-                for allocation in self._allocations.values()
-                if allocation.need_id == need_id
-                and allocation.status in ACTIVE_ALLOCATION_STATUSES
+        need = await self._locked_need(session, need_id)
+        if need.status is NeedStatus.CANCELLED:
+            raise AllocationStateError(
+                f"need {need.ref} is cancelled and cannot reserve stock"
             )
-
-        candidates: list[tuple[Decimal, Decimal, SupplyRecord, Decimal]] = []
-        for supply in self._supplies.values():
-            if supply.resource is not need.resource or supply.unit is not need.unit:
-                continue
-            available = self.available(supply.id)
-            if available <= 0:
-                continue
-            supply_entity = self._entities[supply.entity_id]
-            if (
-                need_entity.lat is None
-                or need_entity.lon is None
-                or supply_entity.lat is None
-                or supply_entity.lon is None
-            ):
-                continue
-            distance = haversine_km(
-                need_entity.lat,
-                need_entity.lon,
-                supply_entity.lat,
-                supply_entity.lon,
+        if need.needs_human_review:
+            # Medical/escalated needs never receive automatic commitment.
+            return CommitResult(allocations=(), quantity=Decimal("0"))
+        own_drafts = [draft for draft in drafts if draft.need_id == need_id]
+        supply_ids = sorted({draft.supply_id for draft in own_drafts}, key=str)
+        supplies: dict[UUID, Supply] = {}
+        if supply_ids:
+            locked = await session.scalars(
+                sa.select(Supply)
+                .where(Supply.id.in_(supply_ids))
+                .order_by(Supply.id)
+                .with_for_update()
             )
-            if distance > self._max_radius_km:
-                continue
-            freshness = freshness_factor(supply.updated_at, now)
-            score = score_candidate(
-                distance_km=distance,
-                available=available,
-                remaining_need=remaining,
-                freshness=freshness,
-            )
-            candidates.append((score, distance, supply, available))
+            supplies = {supply.id: supply for supply in locked}
 
-        candidates.sort(key=lambda item: (-item[0], str(item[2].id)))
-        created: list[AllocationRecord] = []
-        for _, distance, supply, available in candidates:
-            if remaining <= 0:
-                break
-            reserved = min(remaining, available)
-            allocation = AllocationRecord(
+        quantities_by_supply: dict[UUID, list[AllocationQuantities]] = {}
+        for supply_id in supply_ids:
+            quantities_by_supply[supply_id] = _quantities(
+                await self.allocations_for_supply(session, supply_id)
+            )
+        fresh_remaining = await self.remaining_for_need(session, need)
+
+        created: list[Allocation] = []
+        for draft in own_drafts:
+            if fresh_remaining <= 0:
+                await self._record_adjusted(
+                    session, need, draft,
+                    committed=Decimal("0"), reason="need_already_filled",
+                    actor_id=actor_id,
+                )
+                continue
+            supply = supplies.get(draft.supply_id)
+            if supply is None:
+                await self._record_adjusted(
+                    session, need, draft,
+                    committed=Decimal("0"), reason="supply_missing",
+                    actor_id=actor_id,
+                )
+                continue
+            if supply.resource is not need.resource or supply.unit != need.unit:
+                # Stale candidate: no longer a match for this need.
+                await self._record_adjusted(
+                    session, need, draft,
+                    committed=Decimal("0"), reason="stale_candidate",
+                    actor_id=actor_id,
+                )
+                continue
+            supply_quantities = quantities_by_supply[draft.supply_id]
+            fresh_available = supply.on_hand - reserved_remaining(supply_quantities)
+            quantity = min(draft.quantity, fresh_available, fresh_remaining)
+            if quantity <= 0:
+                await self._record_adjusted(
+                    session, need, draft,
+                    committed=Decimal("0"), reason="no_fresh_availability",
+                    actor_id=actor_id,
+                )
+                continue
+            quantity = quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+            allocation = Allocation(
                 id=uuid4(),
-                ref=self._references.next("AL"),
+                incident_id=need.incident_id,
                 need_id=need.id,
                 supply_id=supply.id,
+                ref=await new_reference(session, "AL"),
                 resource=need.resource,
-                quantity=reserved,
+                quantity=quantity,
                 unit=need.unit,
                 delivered_quantity=Decimal("0"),
-                distance_km=distance,
+                distance_km=draft.distance_km,
                 status=AllocationStatus.PROPOSED,
-                critic_verdict="pending",
+                critic_verdict=critic_verdict,
                 created_at=now,
                 updated_at=now,
             )
-            self._allocations[allocation.id] = allocation
+            session.add(allocation)
+            await session.flush()
             created.append(allocation)
-            remaining -= reserved
+            supply_quantities.append(
+                AllocationQuantities(
+                    quantity=quantity,
+                    delivered_quantity=Decimal("0"),
+                    status=AllocationStatus.PROPOSED,
+                )
+            )
+            fresh_remaining -= quantity
+            await record_event(
+                session,
+                incident_id=need.incident_id,
+                event_type="allocation.proposed",
+                actor_id=actor_id,
+                aggregate_type="allocation",
+                aggregate_id=allocation.id,
+                payload={
+                    "allocation_ref": allocation.ref,
+                    "need_ref": need.ref,
+                    "supply_id": str(supply.id),
+                    "quantity": str(quantity),
+                    "unit": need.unit,
+                    "distance_km": str(draft.distance_km),
+                },
+            )
+            if quantity < draft.quantity:
+                await self._record_adjusted(
+                    session, need, draft,
+                    committed=quantity, reason="fresh_availability",
+                    actor_id=actor_id,
+                )
+        await self.refresh_need_status(session, need)
+        return CommitResult(
+            allocations=tuple(created),
+            quantity=sum((row.quantity for row in created), Decimal("0")),
+        )
 
-        covered = need.quantity - remaining
-        if delivered_total >= need.quantity:
-            status = NeedStatus.FULFILLED
-        elif delivered_total > 0:
-            status = NeedStatus.PARTIAL
-        elif covered >= need.quantity:
-            status = NeedStatus.MATCHED
-        elif covered > 0:
-            status = NeedStatus.PARTIAL
+    # -- supply snapshots and reconciliation ---------------------------------------
+
+    async def apply_supply_snapshot(
+        self,
+        session: AsyncSession,
+        *,
+        incident_id: UUID,
+        entity_id: UUID,
+        resource: Resource,
+        quantity: Decimal,
+        unit: str,
+        source_report_id: UUID | None,
+        actor_id: UUID | None = None,
+    ) -> SnapshotResult:
+        """Store an absolute on-hand snapshot and reconcile reservations.
+
+        If the new figure cannot support active reservations, only the
+        excess newest allocations are cancelled (proposals first); delivered
+        history and unaffected allocations are never altered.
+        """
+        now = self._clock()
+        supply = await session.scalar(
+            sa.select(Supply)
+            .where(
+                Supply.incident_id == incident_id,
+                Supply.entity_id == entity_id,
+                Supply.resource == resource,
+            )
+            .with_for_update()
+        )
+        if supply is None:
+            supply = Supply(
+                id=uuid4(),
+                incident_id=incident_id,
+                entity_id=entity_id,
+                source_report_id=source_report_id,
+                resource=resource,
+                on_hand=quantity.quantize(_QUANTUM, rounding=ROUND_DOWN),
+                unit=unit,
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(supply)
         else:
-            status = NeedStatus.OPEN
-        self._needs[need.id] = replace(need, status=status, updated_at=now)
-        return tuple(created)
+            if supply.unit != unit:
+                reserved = reserved_remaining(
+                    _quantities(await self.allocations_for_supply(session, supply.id))
+                )
+                if reserved > 0:
+                    raise AvailabilityError(
+                        f"snapshot unit {unit!r} cannot replace {supply.unit!r} "
+                        f"while {reserved} is reserved in the old unit"
+                    )
+            supply.on_hand = quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+            supply.unit = unit
+            supply.source_report_id = source_report_id or supply.source_report_id
+            supply.updated_at = now
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=incident_id,
+            event_type="supply.snapshot",
+            actor_id=actor_id,
+            aggregate_type="supply",
+            aggregate_id=supply.id,
+            payload={
+                "entity_id": str(entity_id),
+                "resource": resource.value,
+                "on_hand": str(supply.on_hand),
+                "unit": unit,
+                "report_id": str(source_report_id) if source_report_id else None,
+            },
+        )
 
-    # -- read views -------------------------------------------------------
+        rows = await self.allocations_for_supply(session, supply.id)
+        reserved = reserved_remaining(_quantities(rows))
+        cancelled: list[Allocation] = []
+        if supply.on_hand < reserved:
+            excess = reserved - supply.on_hand
+            affected_needs: list[UUID] = []
+            for allocation in _cancellation_order(rows):
+                if excess <= 0:
+                    break
+                remaining = allocation.quantity - allocation.delivered_quantity
+                await self._cancel_row(
+                    session, allocation, reason="supply_snapshot", actor_id=actor_id
+                )
+                cancelled.append(allocation)
+                excess -= remaining
+                if allocation.need_id not in affected_needs:
+                    affected_needs.append(allocation.need_id)
+            for affected_id in affected_needs:
+                affected = await session.get(Need, affected_id)
+                if affected is not None:
+                    await self.refresh_need_status(session, affected)
+        return SnapshotResult(supply=supply, cancelled=tuple(cancelled))
 
-    def all_entities(self) -> Sequence[EntityRecord]:
-        return tuple(self._entities.values())
+    # -- need/allocation lifecycle ---------------------------------------------------
 
-    def all_needs(self) -> Sequence[NeedRecord]:
-        return tuple(self._needs.values())
+    async def update_need(
+        self,
+        session: AsyncSession,
+        *,
+        need_id: UUID,
+        new_quantity: Decimal,
+        actor_id: UUID | None = None,
+    ) -> Need:
+        """Revise a need quantity, cancelling only the newest excess.
 
-    def all_supplies(self) -> Sequence[SupplyRecord]:
-        return tuple(self._supplies.values())
+        A revision below the delivered total is always rejected — including
+        for operators — and is never clamped.
+        """
+        need = await self._locked_need(session, need_id)
+        rows = await self.allocations_for_need(session, need.id)
+        quantities = _quantities(rows)
+        delivered = delivered_total(quantities)
+        if new_quantity < delivered:
+            raise AvailabilityError(
+                f"need quantity {new_quantity} is below delivered total {delivered}"
+            )
+        old_quantity = need.quantity
+        need.quantity = new_quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+        need.updated_at = self._clock()
+        await session.flush()
 
-    def all_allocations(self) -> Sequence[AllocationRecord]:
-        return tuple(self._allocations.values())
+        reserved = reserved_remaining(quantities)
+        allowed_reserved = need.quantity - delivered
+        if reserved > allowed_reserved:
+            excess = reserved - allowed_reserved
+            for allocation in _cancellation_order(rows):
+                if excess <= 0:
+                    break
+                remaining = allocation.quantity - allocation.delivered_quantity
+                await self._cancel_row(
+                    session, allocation, reason="need_reduced", actor_id=actor_id
+                )
+                excess -= remaining
+        await record_event(
+            session,
+            incident_id=need.incident_id,
+            event_type="need.updated",
+            actor_id=actor_id,
+            aggregate_type="need",
+            aggregate_id=need.id,
+            payload={
+                "need_ref": need.ref,
+                "old_quantity": str(old_quantity),
+                "new_quantity": str(need.quantity),
+            },
+        )
+        await self.refresh_need_status(session, need)
+        return need
+
+    async def confirm_allocation(
+        self,
+        session: AsyncSession,
+        *,
+        allocation_id: UUID,
+        actor_id: UUID | None = None,
+    ) -> Allocation:
+        need, _, allocation = await self._locked_trio(session, allocation_id)
+        if not can_transition(allocation.status, AllocationStatus.CONFIRMED):
+            raise AllocationStateError(
+                f"allocation {allocation.ref} cannot be confirmed from "
+                f"{allocation.status.value}"
+            )
+        allocation.status = AllocationStatus.CONFIRMED
+        allocation.updated_at = self._clock()
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=need.incident_id,
+            event_type="allocation.confirmed",
+            actor_id=actor_id,
+            aggregate_type="allocation",
+            aggregate_id=allocation.id,
+            payload={"allocation_ref": allocation.ref, "need_ref": need.ref},
+        )
+        return allocation
+
+    async def cancel_allocation(
+        self,
+        session: AsyncSession,
+        *,
+        allocation_id: UUID,
+        actor_id: UUID | None = None,
+        reason: str = "cancelled",
+    ) -> Allocation:
+        need, _, allocation = await self._locked_trio(session, allocation_id)
+        if not can_transition(allocation.status, AllocationStatus.CANCELLED):
+            raise AllocationStateError(
+                f"allocation {allocation.ref} cannot be cancelled from "
+                f"{allocation.status.value}"
+            )
+        await self._cancel_row(session, allocation, reason=reason, actor_id=actor_id)
+        await self.refresh_need_status(session, need)
+        return allocation
+
+    async def cancel_need(
+        self,
+        session: AsyncSession,
+        *,
+        need_id: UUID,
+        actor_id: UUID | None = None,
+    ) -> Need:
+        need = await self._locked_need(session, need_id)
+        if need.status is NeedStatus.CANCELLED:
+            return need
+        for allocation in _cancellation_order(
+            await self.allocations_for_need(session, need.id)
+        ):
+            await self._cancel_row(
+                session, allocation, reason="need_cancelled", actor_id=actor_id
+            )
+        need.status = NeedStatus.CANCELLED
+        need.updated_at = self._clock()
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=need.incident_id,
+            event_type="need.cancelled",
+            actor_id=actor_id,
+            aggregate_type="need",
+            aggregate_id=need.id,
+            payload={"need_ref": need.ref},
+        )
+        return need
+
+    async def record_delivery(
+        self,
+        session: AsyncSession,
+        *,
+        allocation_id: UUID,
+        quantity: Decimal,
+        actor_id: UUID | None = None,
+    ) -> Allocation:
+        """Consume on-hand stock for an explicitly reported delivery.
+
+        Only a confirmed allocation can receive deliveries. A partial
+        delivery leaves the allocation confirmed; a full delivery marks it
+        delivered. On-hand stock is decremented exactly once per report.
+        """
+        need, supply, allocation = await self._locked_trio(session, allocation_id)
+        if allocation.unit != supply.unit:
+            raise AllocationStateError(
+                f"allocation {allocation.ref} is denominated in {allocation.unit!r} "
+                f"but the supply is now {supply.unit!r}"
+            )
+        if allocation.status is not AllocationStatus.CONFIRMED:
+            raise AllocationStateError(
+                f"allocation {allocation.ref} cannot receive a delivery from "
+                f"{allocation.status.value}"
+            )
+        quantity = quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+        if quantity <= 0:
+            raise AllocationStateError(
+                "delivery quantity must be at least 0.001 in canonical resolution"
+            )
+        outstanding = allocation.quantity - allocation.delivered_quantity
+        if quantity > outstanding:
+            raise AllocationStateError(
+                f"delivery {quantity} exceeds outstanding {outstanding}"
+            )
+        if supply.on_hand < quantity:
+            raise AvailabilityError("on-hand stock cannot cover this delivery")
+        now = self._clock()
+        allocation.delivered_quantity = (
+            allocation.delivered_quantity + quantity
+        ).quantize(_QUANTUM, rounding=ROUND_DOWN)
+        if allocation.delivered_quantity >= allocation.quantity:
+            allocation.status = AllocationStatus.DELIVERED
+        allocation.updated_at = now
+        supply.on_hand = (supply.on_hand - quantity).quantize(_QUANTUM, rounding=ROUND_DOWN)
+        supply.updated_at = now
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=need.incident_id,
+            event_type="allocation.delivered",
+            actor_id=actor_id,
+            aggregate_type="allocation",
+            aggregate_id=allocation.id,
+            payload={
+                "allocation_ref": allocation.ref,
+                "need_ref": need.ref,
+                "quantity": str(quantity),
+                "delivered_total": str(allocation.delivered_quantity),
+            },
+        )
+        await self.refresh_need_status(session, need)
+        return allocation
+
+    # -- status maintenance -----------------------------------------------------------
+
+    async def refresh_need_status(self, session: AsyncSession, need: Need) -> Need:
+        """Recompute a need's status from its committed allocations."""
+        if need.status is NeedStatus.CANCELLED:
+            return need
+        quantities = _quantities(await self.allocations_for_need(session, need.id))
+        need.status = derive_need_status(
+            quantity=need.quantity,
+            delivered_total=delivered_total(quantities),
+            reserved_remaining=reserved_remaining(quantities),
+            cancelled=False,
+        )
+        need.updated_at = self._clock()
+        await session.flush()
+        return need
+
+    # -- locking helpers -----------------------------------------------------------------
+
+    async def _locked_need(self, session: AsyncSession, need_id: UUID) -> Need:
+        need = await session.scalar(
+            sa.select(Need).where(Need.id == need_id).with_for_update()
+        )
+        if need is None:
+            raise AllocationStateError(f"need {need_id} does not exist")
+        return need
+
+    async def _locked_trio(
+        self, session: AsyncSession, allocation_id: UUID
+    ) -> tuple[Need, Supply, Allocation]:
+        peek = await session.get(Allocation, allocation_id)
+        if peek is None:
+            raise AllocationStateError(f"allocation {allocation_id} does not exist")
+        need = await self._locked_need(session, peek.need_id)
+        supply = await session.scalar(
+            sa.select(Supply).where(Supply.id == peek.supply_id).with_for_update()
+        )
+        allocation = await session.scalar(
+            sa.select(Allocation)
+            .where(Allocation.id == allocation_id)
+            .with_for_update()
+        )
+        if supply is None or allocation is None:  # pragma: no cover - FK guarantees
+            raise AllocationStateError("allocation aggregate is incomplete")
+        return need, supply, allocation
+
+    async def _record_adjusted(
+        self,
+        session: AsyncSession,
+        need: Need,
+        draft: AllocationDraft,
+        *,
+        committed: Decimal,
+        reason: str,
+        actor_id: UUID | None,
+    ) -> None:
+        """Audit a draft that commit could not honour exactly as approved."""
+        await record_event(
+            session,
+            incident_id=need.incident_id,
+            event_type="allocation.adjusted",
+            actor_id=actor_id,
+            aggregate_type="need",
+            aggregate_id=need.id,
+            payload={
+                "need_ref": need.ref,
+                "supply_id": str(draft.supply_id),
+                "approved_quantity": str(draft.quantity),
+                "committed_quantity": str(committed),
+                "reason": reason,
+            },
+        )
+
+    async def _cancel_row(
+        self,
+        session: AsyncSession,
+        allocation: Allocation,
+        *,
+        reason: str,
+        actor_id: UUID | None,
+    ) -> None:
+        allocation.status = AllocationStatus.CANCELLED
+        allocation.updated_at = self._clock()
+        await session.flush()
+        await record_event(
+            session,
+            incident_id=allocation.incident_id,
+            event_type="allocation.cancelled",
+            actor_id=actor_id,
+            aggregate_type="allocation",
+            aggregate_id=allocation.id,
+            payload={
+                "allocation_ref": allocation.ref,
+                "need_id": str(allocation.need_id),
+                "reason": reason,
+            },
+        )

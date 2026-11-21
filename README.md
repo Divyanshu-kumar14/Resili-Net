@@ -11,13 +11,16 @@ consumes it.
 
 ## Status
 
-Phase 1 is locally verified: durable idempotent intake, a relational model with
-an Alembic migration, a lease-based job runner, strict extraction with a
-deterministic prompt-injection audit, gazetteer-first cached geocoding, and a
-one-round clarification flow. Matching, secure actions, the public map, and
-live sponsor credentials land in later phases. The live OpenAI, Nominatim, and
-Agentboxd account gates remain unproven. See `docs/architecture.md`,
-`docs/evidence/phase0.md`, and `docs/evidence/phase1.md`.
+Phases 1–2 are locally verified: durable idempotent intake, a relational model
+with Alembic migrations, a lease-based job runner, strict extraction with a
+deterministic prompt-injection audit, gazetteer-first cached geocoding, a
+one-round clarification flow, deterministic matching with a bounded critic,
+transactional stock reservations, and threaded recommendation replies with
+private coordinator confirmation grants. Secure action execution, the public
+map API and Momen UI, and live sponsor credentials land in later phases. The
+live OpenAI, Nominatim, Agentboxd, MojoAuth, and Momen account gates remain
+unproven. See `docs/architecture.md`, `docs/evidence/phase0.md`,
+`docs/evidence/phase1.md`, and `docs/evidence/phase2.md`.
 
 ## Requirements
 

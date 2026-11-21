@@ -107,7 +107,7 @@ def make_event(
 
 def test_migration_creates_the_core_schema(database_path: Path) -> None:
     assert table_names(database_path) >= CORE_TABLES
-    assert alembic_revision(database_path) == "0001"
+    assert alembic_revision(database_path) == "0002"
 
 
 async def test_duplicate_event_creates_one_message_and_one_job(
@@ -193,6 +193,8 @@ async def test_withheld_envelope_is_deferred_then_fetched(
         inbox=inbox,
         extraction=ExtractionService(incident_id, _unused_intelligence(), FakeGeocoder({})),
         notifications=_notifications(),
+        intelligence=_unused_intelligence(),
+        public_base_url="http://testserver",
         clock=clock,
     )
     worker = DurableWorker(

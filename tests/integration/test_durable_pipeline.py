@@ -8,11 +8,13 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from resilinet.adapters.fakes import FakeGeocoder, FakeInboxProvider, FakeIntelligenceProvider
+from resilinet.db import transaction
 from resilinet.models import (
     Allocation,
     Entity,
     EventLog,
     Job,
+    JobStatus,
     JobType,
     Message,
     MessageStatus,
@@ -78,6 +80,26 @@ def query_parsed() -> ParsedEmail:
     )
 
 
+def compound_parsed() -> ParsedEmail:
+    return ParsedEmail(
+        context=ReportContext(
+            kind=ReportKind.NEED,
+            entity_name="Shelter 4",
+            entity_type=EntityType.SHELTER,
+            location_text="near Gandhi Park",
+            headcount=40,
+            urgency=Urgency.HIGH,
+            confidence=FieldConfidence(location=0.95, items=0.95, headcount=0.95),
+        ),
+        reports=[
+            ParsedReport(
+                resource=Resource.POTABLE_WATER, quantity=Decimal("100"), unit="l"
+            ),
+            ParsedReport(resource=Resource.FOOD, quantity=Decimal("5"), unit="barrels"),
+        ],
+    )
+
+
 def fixtures() -> dict[str, ParsedEmail]:
     return {
         "clean-need": need_parsed(),
@@ -87,6 +109,7 @@ def fixtures() -> dict[str, ParsedEmail]:
         ),
         "injection-need": need_parsed(),
         "query-status": query_parsed(),
+        "compound-mixed": compound_parsed(),
     }
 
 
@@ -106,14 +129,15 @@ async def build_harness(
 ) -> Harness:
     inbox = FakeInboxProvider(webhook_secret="secret", now=clock)
     mailbox = await inbox.provision_inbox("demo-incident")
-    extraction = ExtractionService(
-        incident_id, FakeIntelligenceProvider(fixtures()), FakeGeocoder(PLACES)
-    )
+    intelligence = FakeIntelligenceProvider(fixtures())
+    extraction = ExtractionService(incident_id, intelligence, FakeGeocoder(PLACES))
     handler = MessageJobHandler(
         session_factory=session_factory,
         inbox=inbox,
         extraction=extraction,
         notifications=NotificationService(),
+        intelligence=intelligence,
+        public_base_url="http://testserver",
         clock=clock,
     )
     worker = DurableWorker(
@@ -196,7 +220,7 @@ async def counts(
         return result
 
 
-async def test_clean_report_is_persisted_without_a_competing_email(
+async def test_clean_report_creates_an_estimated_need_and_one_recommendation(
     session_factory: async_sessionmaker[AsyncSession],
     incident_id: UUID,
     clock: Clock,
@@ -214,6 +238,8 @@ async def test_clean_report_is_persisted_without_a_competing_email(
     async with session_factory() as session:
         message = await session.get(Message, accepted.message_id)
         report = await session.scalar(sa.select(Report))
+        need = await session.scalar(sa.select(Need))
+        notice = await session.scalar(sa.select(OutboundEmail))
     state = await counts(session_factory)
     assert message is not None and message.status is MessageStatus.PROCESSED
     assert report is not None
@@ -221,11 +247,20 @@ async def test_clean_report_is_persisted_without_a_competing_email(
     assert report.quantity is None
     assert state["entities"] == 1
     assert state["reports"] == 1
-    assert state["needs"] == 0
+    # Phase 2: the persisted report becomes an estimated 120 l need, and the
+    # threaded recommendation is the single logical notification.
+    assert need is not None
+    assert need.quantity == Decimal("120.000")
+    assert need.quantity_source.value == "estimated"
+    assert state["needs"] == 1
     assert state["supplies"] == 0
     assert state["allocations"] == 0
-    # The threaded recommendation is Task 12's single notification.
-    assert state["outbox"] == 0
+    assert notice is not None and notice.kind == "recommendation"
+    assert notice.to_address == "volunteer@example.org"
+    assert need.ref in notice.body_text
+    assert "~120 l" in notice.body_text
+    assert "No stock is currently reserved" in notice.body_text
+    assert state["outbox"] == 1
 
 
 async def test_ambiguous_report_gets_one_clarification_email(
@@ -301,7 +336,7 @@ async def test_correction_reply_merges_and_acknowledges(
     assert "missing details were added" in harness.inbox.sent_messages[1].draft.text
 
 
-async def test_injection_is_audited_and_has_no_domain_effect(
+async def test_injection_is_audited_and_cannot_change_stock(
     session_factory: async_sessionmaker[AsyncSession],
     incident_id: UUID,
     clock: Clock,
@@ -326,6 +361,8 @@ async def test_injection_is_audited_and_has_no_domain_effect(
                 EventLog.event_type == "security.extraction_injection"
             )
         )
+    async with session_factory() as session:
+        notice = await session.scalar(sa.select(OutboundEmail))
     state = await counts(session_factory)
     assert message is not None and message.status is MessageStatus.PROCESSED
     assert audit is not None
@@ -333,10 +370,125 @@ async def test_injection_is_audited_and_has_no_domain_effect(
     assert "instruction_override" in audit.payload["patterns"]
     assert "bulk_release" in audit.payload["patterns"]
     assert "ignore previous" not in str(audit.payload).casefold()
-    assert state["needs"] == 0
+    # The schema-valid report is registered, but the injection changed no
+    # stock: no supply, no allocation, and the only outbound email is the
+    # ordinary recommendation to the sender themselves.
+    assert state["needs"] == 1
     assert state["supplies"] == 0
     assert state["allocations"] == 0
-    assert state["outbox"] == 0
+    assert notice is not None and notice.kind == "recommendation"
+    assert notice.to_address == "volunteer@example.org"
+    assert "send all water" not in notice.body_text.casefold()
+    assert "No stock is currently reserved" in notice.body_text
+
+
+async def test_linked_reply_after_completion_stays_in_review(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    """A linked reply processed after completion must not enter matching.
+
+    The original is completed directly (as a legitimate merge would leave
+    it); a stale linked reply that is processed afterwards goes to review
+    and can neither register reports nor trigger a recommendation.
+    """
+    from uuid import uuid4
+
+    from resilinet.services.clarification import ClarificationService
+
+    harness = await build_harness(session_factory, incident_id, clock)
+    original = await deliver(
+        harness,
+        provider_message_id="msg-ambiguous",
+        subject="Shelter 4 water",
+        text="ambiguous-need Shelter 4 needs potable water near Gandhi Park.",
+        thread="thread-gate",
+    )
+    assert await harness.worker.run_once() == 1
+    assert await harness.outbox.deliver_due() is True
+
+    async with transaction(session_factory) as session:
+        original_row = await session.get(Message, original.message_id)
+        assert original_row is not None
+        service = ClarificationService(session, NotificationService(), clock=clock)
+        await service.process_ready(
+            original_row, need_parsed(quantity=Decimal("120"), unit="l")
+        )
+        sender_id = original_row.sender_id
+        late_id = uuid4()
+        session.add(
+            Message(
+                id=late_id,
+                incident_id=incident_id,
+                sender_id=sender_id,
+                provider_message_id="msg-late-linked",
+                mailbox_id=harness.mailbox_id,
+                subject="Re: Shelter 4 water",
+                body_text="correction-reply 40 people, 120 l of potable water.",
+                raw_text="correction-reply 40 people, 120 l of potable water.",
+                status=MessageStatus.QUEUED,
+                received_at=NOW,
+                reply_to_message_id=original.message_id,
+                thread_id="thread-gate",
+            )
+        )
+        session.add(
+            Job(
+                id=uuid4(),
+                incident_id=incident_id,
+                type=JobType.PROCESS_MESSAGE,
+                payload={"message_id": str(late_id)},
+                status=JobStatus.PENDING,
+                dedupe_key=f"process:{late_id}",
+                available_at=NOW,
+            )
+        )
+
+    assert await harness.worker.run_once() == 1
+
+    async with session_factory() as session:
+        late_row = await session.get(Message, late_id)
+        recommendations = list(
+            await session.scalars(
+                sa.select(OutboundEmail).where(OutboundEmail.kind == "recommendation")
+            )
+        )
+    state = await counts(session_factory)
+    assert late_row is not None and late_row.status is MessageStatus.NEEDS_REVIEW
+    assert state["needs"] == 0  # registration never ran for the late reply
+    assert state["allocations"] == 0
+    assert state["reviews"] >= 1
+    assert recommendations == []
+
+
+async def test_compound_partial_failure_still_matches_the_valid_line(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    harness = await build_harness(session_factory, incident_id, clock)
+    await deliver(
+        harness,
+        provider_message_id="msg-compound",
+        subject="Shelter 4 supplies",
+        text="compound-mixed Shelter 4 needs water and food near Gandhi Park.",
+    )
+
+    assert await harness.worker.run_once() == 1
+
+    async with session_factory() as session:
+        needs = list(await session.scalars(sa.select(Need)))
+        rows = list(await session.scalars(sa.select(OutboundEmail)))
+    assert len(needs) == 1 and needs[0].resource is Resource.POTABLE_WATER
+    kinds = {row.kind for row in rows}
+    assert "recommendation" in kinds
+    assert "quantity_review" in kinds
+    review_body = next(row.body_text for row in rows if row.kind == "quantity_review")
+    # The valid line was applied; the notice must not claim otherwise.
+    assert "nothing was reserved" not in review_body
+    assert "no stock changed" not in review_body
+    assert "food" in review_body
 
 
 async def test_status_query_gets_a_read_only_explanation(

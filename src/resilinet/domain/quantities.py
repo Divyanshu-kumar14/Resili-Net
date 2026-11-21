@@ -38,6 +38,18 @@ class Quantity:
     source: QuantitySource
 
 
+@dataclass(frozen=True, slots=True)
+class StatedQuantity:
+    """A validated quantity for a resource without a canonical unit.
+
+    The sender's own unit is preserved (normalized, never guessed or
+    converted); matching may only compare quantities whose units are equal.
+    """
+
+    amount: Decimal
+    unit: str
+
+
 class QuantityError(ValueError):
     """A quantity or unit cannot be accepted without clarification."""
 
@@ -112,6 +124,27 @@ def to_canonical(resource: Resource, quantity: Decimal | None, unit: str | None)
         unit=canonical,
         source=QuantitySource.STATED,
     )
+
+
+def canonical_unit(resource: Resource) -> CanonicalUnit | None:
+    """The canonical unit for ``resource``, or ``None`` when it has none."""
+    return _CANONICAL_UNIT.get(resource)
+
+
+def to_stated(resource: Resource, quantity: Decimal | None, unit: str | None) -> StatedQuantity:
+    """Validate a stated quantity for a resource without a canonical unit.
+
+    Amount rules are identical to canonical quantities (finite, non-negative,
+    capped, millilitre resolution); the unit is the sender's, stripped and
+    case-folded. Canonical resources must use :func:`to_canonical` instead.
+    """
+    if resource in _CANONICAL_UNIT:
+        raise QuantityError(f"resource {resource.value} has a canonical unit")
+    if quantity is None:
+        raise QuantityError("quantity is missing")
+    if unit is None or not unit.strip():
+        raise QuantityError("unit is missing")
+    return StatedQuantity(amount=_validate(quantity), unit=unit.strip().casefold())
 
 
 def estimate_need(resource: Resource, headcount: int | None) -> Quantity | None:
