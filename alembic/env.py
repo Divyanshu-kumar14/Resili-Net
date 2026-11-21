@@ -16,6 +16,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from resilinet.config import Settings
+from resilinet.db import normalize_async_database_url
 from resilinet.models import Base
 
 config = context.config
@@ -28,8 +29,8 @@ target_metadata = Base.metadata
 def _database_url() -> str:
     configured = config.get_main_option("sqlalchemy.url") or ""
     if configured.strip():
-        return configured.strip()
-    return Settings().database_url
+        return normalize_async_database_url(configured)
+    return normalize_async_database_url(Settings().database_url)
 
 
 def _configure(**kwargs: object) -> None:

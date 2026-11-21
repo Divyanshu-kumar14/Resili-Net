@@ -1,0 +1,72 @@
+databases:
+  - name: resilinet-db
+    plan: free
+    region: oregon
+
+services:
+  - type: web
+    name: resilinet-web
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run alembic upgrade head && uv run uvicorn resilinet.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: RESILINET_APP_ENV
+        value: live
+      - key: RESILINET_LLM_PROVIDER
+        value: nvidia
+      - key: RESILINET_DATABASE_URL
+        fromDatabase:
+          name: resilinet-db
+          property: connectionString
+      - key: RESILINET_INCIDENT_KEY
+        value: demo-incident
+      - key: RESILINET_PUBLIC_BASE_URL
+        value: https://resilinet-web.onrender.com
+      - key: RESILINET_NVIDIA_MODEL
+        value: meta/llama-3.3-70b-instruct
+      - key: RESILINET_NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: RESILINET_NOMINATIM_CONTACT_EMAIL
+        sync: false
+      - key: RESILINET_AGENTBOXD_API_KEY
+        sync: false
+      - key: RESILINET_AGENTBOXD_WEBHOOK_SECRET
+        sync: false
+      - key: RESILINET_NVIDIA_API_KEY
+        sync: false
+
+  - type: worker
+    name: resilinet-worker
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install uv && uv sync --frozen --no-dev
+    startCommand: uv run python scripts/run_worker.py
+    envVars:
+      - key: RESILINET_APP_ENV
+        value: live
+      - key: RESILINET_LLM_PROVIDER
+        value: nvidia
+      - key: RESILINET_DATABASE_URL
+        fromDatabase:
+          name: resilinet-db
+          property: connectionString
+      - key: RESILINET_INCIDENT_KEY
+        value: demo-incident
+      - key: RESILINET_PUBLIC_BASE_URL
+        value: https://resilinet-web.onrender.com
+      - key: RESILINET_NVIDIA_MODEL
+        value: meta/llama-3.3-70b-instruct
+      - key: RESILINET_NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      - key: RESILINET_NOMINATIM_CONTACT_EMAIL
+        sync: false
+      - key: RESILINET_AGENTBOXD_API_KEY
+        sync: false
+      - key: RESILINET_AGENTBOXD_WEBHOOK_SECRET
+        sync: false
+      - key: RESILINET_NVIDIA_API_KEY
+        sync: false

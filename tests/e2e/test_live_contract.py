@@ -21,11 +21,16 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_live_inbound_to_threaded_reply() -> None:
+    provider = os.environ.get("RESILINET_LLM_PROVIDER", "openai").strip().lower()
+    provider_key = (
+        "RESILINET_NVIDIA_API_KEY"
+        if provider == "nvidia"
+        else "RESILINET_OPENAI_API_KEY"
+    )
     required = [
-        "AGENTBOXD_API_KEY",
-        "AGENTBOXD_WEBHOOK_SECRET",
-        "OPENAI_API_KEY",
-        "MOJOAUTH_API_KEY",
+        "RESILINET_AGENTBOXD_API_KEY",
+        "RESILINET_AGENTBOXD_WEBHOOK_SECRET",
+        provider_key,
     ]
     missing = [name for name in required if not os.environ.get(name)]
     assert not missing, f"missing live settings: {', '.join(missing)}"

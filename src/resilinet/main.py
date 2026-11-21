@@ -11,8 +11,8 @@ from typing import Any
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from .adapters.agentboxd import AgentboxdInboxProvider
 from .api.routes import router
+from .composition import build_inbox_provider
 from .config import Settings
 from .db import create_engine, create_session_factory
 from .observability import (
@@ -40,26 +40,13 @@ class Container:
     engine: AsyncEngine | None = None
 
 
-def _live_inbox(settings: Settings) -> AgentboxdInboxProvider:
-    api_key = settings.secret_value("agentboxd_api_key")
-    webhook_secret = settings.secret_value("agentboxd_webhook_secret")
-    if not api_key or not webhook_secret:
-        raise RuntimeError("live mode reached inbox construction without Agentboxd secrets")
-    return AgentboxdInboxProvider(
-        api_key=api_key,
-        webhook_secret=webhook_secret,
-        base_url=settings.agentboxd_base_url,
-        timeout_seconds=settings.request_timeout_seconds,
-    )
-
-
 def build_container(settings: Settings) -> Container:
     """Build the process container without performing any database IO."""
     engine = create_engine(settings)
     return Container(
         settings=settings,
         session_factory=create_session_factory(engine),
-        inbox=_live_inbox(settings) if settings.is_live else None,
+        inbox=build_inbox_provider(settings) if settings.is_live else None,
         engine=engine,
     )
 

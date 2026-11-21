@@ -22,7 +22,7 @@ durable intake transaction: Message + Job (+ provider idempotency key)
       v
 supervised worker
       |-- fetch withheld/envelope content when absent
-      |-- extract (OpenAI structured output, or Fake/Replay)
+      |-- extract (OpenAI or NVIDIA NIM structured output, or Fake/Replay)
       |-- geocode (gazetteer -> cached Nominatim -> none)
       |-- clarify once, or persist Report/Need/Supply
       |-- deterministic matching + rules critic + bounded LLM critique
@@ -116,6 +116,19 @@ Sources: <https://docs.momen.app/docs/actions/guide/api_integration/>,
 - **UNRESOLVED (account-only):** model availability and rate limits for the
   hackathon account.
 
+### NVIDIA NIM
+
+- NIM exposes the OpenAI-compatible `POST /chat/completions` surface. Its
+  hosted schema documents `tools` but not `tool_choice` or `response_format`,
+  so the adapter asks for one `emit_result` function, validates the returned
+  JSON arguments with the same Pydantic schema, and accepts a JSON-content
+  fallback. A schema-invalid answer gets one deterministic repair attempt.
+- Selected with `RESILINET_LLM_PROVIDER=nvidia`; `RESILINET_NVIDIA_MODEL` and
+  `RESILINET_NVIDIA_BASE_URL` are configurable. Live mode requires only the
+  selected provider's key.
+- **UNRESOLVED (account-only):** tool-calling reliability per NIM model and
+  rate limits for the hackathon account.
+
 ## Runtime invariants
 
 ```text
@@ -198,8 +211,10 @@ signed envelope -> POST /internal/agentboxd/events
   recommendation.
 - Outbound rows are delivered with a stable `outbox:<uuid>` idempotency key. A
   row left in `sending` by a crash is reclaimed after a stale window; the
-  provider key makes that replay safe. The application does not start a
-  supervised worker loop yet; deployment supervision is Task 25.
+  provider key makes that replay safe. `scripts/run_worker.py` drives the
+  message and outbox loops, and `render.yaml` runs it as a Render worker. The
+  FastAPI process does not start it automatically; high-availability
+  supervision remains later work.
 
 ## Public identifiers and logging
 
@@ -230,7 +245,7 @@ record.
 | Gate | Owner action | Blocking? |
 |---|---|---|
 | Agentboxd persistent inbox + HMAC webhook + reply | provide `RESILINET_AGENTBOXD_API_KEY`, `RESILINET_AGENTBOXD_WEBHOOK_SECRET`, register the webhook URL | live mode only |
-| MojoAuth magic link + callback encoding | provide `RESILINET_MOJOAUTH_API_KEY`, run one real test sender, record the redirect | live identity |
+| MojoAuth magic link + callback encoding | optional until Phase 3; provide the key when the identity adapter lands | live identity |
 | Momen scheduled refresh + native map | provide editor access, run the checklist in `docs/momen-setup.md` | live public map |
-| OpenAI structured output | provide `RESILINET_OPENAI_API_KEY`, confirm model quota | live extraction |
+| OpenAI or NVIDIA NIM structured output | provide the selected key, confirm model quota and tool calling | live extraction |
 | Render deployment | owner approval of resources and production migration | release |

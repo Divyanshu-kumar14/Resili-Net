@@ -48,9 +48,26 @@ class UTCDateTime(TypeDecorator[datetime]):
         return value.astimezone(UTC)
 
 
+def normalize_async_database_url(url: str) -> str:
+    """Route bare PostgreSQL URLs through asyncpg.
+
+    Render and Heroku hand out ``postgres://`` / ``postgresql://`` connection
+    strings. SQLAlchemy's asyncio extension needs an explicit async driver, so
+    add ``+asyncpg`` without touching an already-qualified URL.
+    """
+    stripped = url.strip()
+    if stripped.startswith("postgres://"):
+        return "postgresql+asyncpg://" + stripped[len("postgres://") :]
+    if stripped.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + stripped[len("postgresql://") :]
+    return stripped
+
+
 def create_engine(settings: Settings) -> AsyncEngine:
     """Create the process engine for the configured database URL."""
-    return create_async_engine(settings.database_url, pool_pre_ping=True)
+    return create_async_engine(
+        normalize_async_database_url(settings.database_url), pool_pre_ping=True
+    )
 
 
 def create_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

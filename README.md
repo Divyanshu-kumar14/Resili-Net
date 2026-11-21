@@ -17,9 +17,10 @@ deterministic prompt-injection audit, gazetteer-first cached geocoding, a
 one-round clarification flow, deterministic matching with a bounded critic,
 transactional stock reservations, and threaded recommendation replies with
 private coordinator confirmation grants. Secure action execution, the public
-map API and Momen UI, and live sponsor credentials land in later phases. The
-live OpenAI, Nominatim, Agentboxd, MojoAuth, and Momen account gates remain
-unproven. See `docs/architecture.md`, `docs/evidence/phase0.md`,
+map API and Momen UI, and formal process supervision/HA land in later phases; a
+live worker entrypoint and Render Blueprint are present. The live OpenAI or
+NVIDIA NIM, Nominatim, Agentboxd, and MojoAuth account gates remain unproven.
+See `docs/architecture.md`, `docs/evidence/phase0.md`,
 `docs/evidence/phase1.md`, and `docs/evidence/phase2.md`.
 
 ## Requirements
@@ -41,6 +42,56 @@ curl -s localhost:8000/api/v1/health
 provider secrets listed in `.env.example` and refuses to start without them.
 `replay` never makes external network calls.
 
+`RESILINET_LLM_PROVIDER` selects `openai` (Responses API) or `nvidia` (NVIDIA
+NIM chat completions). Both adapters share the same extraction and critic
+prompts and validate tool output with the same Pydantic schemas.
+
+### Live webhook reachability
+
+Agentboxd delivers only to a public HTTPS URL (port 443 or 1024–65535) and
+refuses private, loopback, and single-label hosts. For local live testing,
+expose the app through a tunnel, for example:
+
+```bash
+cloudflared tunnel --url http://localhost:8000
+```
+
+Set `RESILINET_PUBLIC_BASE_URL` to the tunnel origin, register
+`https://<host>/internal/agentboxd/events` for `message.received`,
+`message.enriched`, and `message.released`, and copy its signing secret into
+`RESILINET_AGENTBOXD_WEBHOOK_SECRET`. The webhook only queues jobs; the worker
+process below consumes them. MojoAuth is not required for this path; its
+adapter and action pages are Phase 3 work.
+
+### Provision and run the worker
+
+```bash
+uv run alembic upgrade head
+uv run python scripts/provision.py
+uv run python scripts/run_worker.py
+```
+
+`provision.py` creates the incident row and the persistent Agentboxd inbox, then
+prints the webhook URL to register. `run_worker.py` processes queued messages
+and delivers the outbox. The FastAPI process does not start it automatically.
+
+### Deploy on Render
+
+`render.yaml` defines a free Postgres database, web service, and worker. Create
+a Blueprint from this repository, then enter the `sync: false` secrets
+(`RESILINET_AGENTBOXD_API_KEY`, `RESILINET_AGENTBOXD_WEBHOOK_SECRET`,
+`RESILINET_NVIDIA_API_KEY`, `RESILINET_NOMINATIM_CONTACT_EMAIL`) in the Render
+dashboard. After the web service is live, provision once:
+
+```bash
+render jobs create <web-service-id> --start-command "uv run python scripts/provision.py"
+```
+
+Free web services sleep after inactivity and free Postgres expires after 30
+days; use paid plans for a stable webhook and demo. Update
+`RESILINET_PUBLIC_BASE_URL` if Render assigns a different hostname than
+`resilinet-web.onrender.com`.
+
 ## Checks
 
 ```bash
@@ -54,7 +105,10 @@ uv run mypy src
 - **Agentboxd** — persistent incident inbox, signed inbound webhooks, threaded replies.
 - **MojoAuth** — passwordless sender verification and operator sign-in.
 - **Momen** — public map and accessible list views.
-- **OpenAI** — schema-constrained extraction and a bounded adversarial critic.
+- **OpenAI or NVIDIA NIM** — schema-constrained extraction and a bounded
+  adversarial critic. Select with `RESILINET_LLM_PROVIDER` (`openai` or
+  `nvidia`); the adapter validates the model's tool arguments against the same
+  Pydantic schema.
 
 ## Privacy
 

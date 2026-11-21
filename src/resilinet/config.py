@@ -16,13 +16,22 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AppEnv = Literal["test", "replay", "live"]
 
-#: Settings that must carry a value before the service may run in live mode.
+IntelligenceProviderName = Literal["openai", "nvidia"]
+
+#: Settings that must carry a value before the service may run in live mode,
+#: regardless of which intelligence provider is selected. MojoAuth is not here
+#: yet: no identity adapter or action page consumes it until Phase 3, so
+#: requiring it would block the email-to-reply path without adding safety.
 LIVE_REQUIRED_SECRETS: tuple[str, ...] = (
     "agentboxd_api_key",
     "agentboxd_webhook_secret",
-    "mojoauth_api_key",
-    "openai_api_key",
 )
+
+#: The provider-specific secret required in live mode.
+PROVIDER_SECRETS: dict[IntelligenceProviderName, str] = {
+    "openai": "openai_api_key",
+    "nvidia": "nvidia_api_key",
+}
 
 
 class Settings(BaseSettings):
@@ -46,11 +55,14 @@ class Settings(BaseSettings):
     incident_key: str = Field(default="demo-incident", min_length=1, max_length=120)
     momen_origins: tuple[str, ...] = ()
     log_level: str = "INFO"
+    llm_provider: IntelligenceProviderName = "openai"
 
     agentboxd_base_url: str = "https://api.agentboxd.com"
     mojoauth_base_url: str = "https://api.mojoauth.com"
     openai_model: str = "gpt-4.1-mini"
-    openai_base_url: str = "https://api.openai.com"
+    openai_base_url: str = "https://api.openai.com/v1"
+    nvidia_model: str = "meta/llama-3.3-70b-instruct"
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     nominatim_base_url: str = "https://nominatim.openstreetmap.org"
     nominatim_contact_email: str | None = None
 
@@ -58,18 +70,22 @@ class Settings(BaseSettings):
     agentboxd_webhook_secret: SecretStr | None = None
     mojoauth_api_key: SecretStr | None = None
     openai_api_key: SecretStr | None = None
+    nvidia_api_key: SecretStr | None = None
 
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
 
     @model_validator(mode="after")
     def _require_live_secrets(self) -> Self:
-        # Live mode fails fast for every provider secret, including adapters
-        # that land in later tasks (OpenAI in Task 5, MojoAuth in Task 13).
+        # Live mode fails fast for the providers the running path uses. The
+        # intelligence provider is selectable, so only its own key is
+        # mandatory; MojoAuth remains optional until the identity adapter and
+        # action pages land in Phase 3.
         if self.app_env != "live":
             return self
+        required = (*LIVE_REQUIRED_SECRETS, PROVIDER_SECRETS[self.llm_provider])
         missing = [
             name
-            for name in LIVE_REQUIRED_SECRETS
+            for name in required
             if (value := getattr(self, name)) is None or not value.get_secret_value().strip()
         ]
         if missing:

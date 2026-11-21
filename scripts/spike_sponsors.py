@@ -66,22 +66,34 @@ def _config_presence(settings: Settings) -> list[Result]:
         Result(
             "mojoauth",
             "blocked",
-            "missing MojoAuth API key"
+            "optional until Phase 3; no identity adapter wired"
             if not mojoauth
             else "key present; callback encoding not verified offline",
         )
     )
 
-    openai = settings.secret_value("openai_api_key")
-    results.append(
-        Result(
-            "openai",
-            "blocked",
-            "missing OpenAI API key"
-            if not openai
-            else f"key present; model {settings.openai_model} not queried offline",
+    if settings.llm_provider == "nvidia":
+        nvidia = settings.secret_value("nvidia_api_key")
+        results.append(
+            Result(
+                "nvidia",
+                "blocked",
+                "missing NVIDIA NIM API key"
+                if not nvidia
+                else f"key present; model {settings.nvidia_model} not queried offline",
+            )
         )
-    )
+    else:
+        openai = settings.secret_value("openai_api_key")
+        results.append(
+            Result(
+                "openai",
+                "blocked",
+                "missing OpenAI API key"
+                if not openai
+                else f"key present; model {settings.openai_model} not queried offline",
+            )
+        )
 
     results.append(
         Result("momen", "blocked", "editor-only; use docs/momen-setup.md")
@@ -205,7 +217,7 @@ async def check_openai(settings: Settings, client: httpx.AsyncClient) -> Result:
         return Result("openai", "blocked", "missing RESILINET_OPENAI_API_KEY")
     try:
         response = await client.get(
-            f"{settings.openai_base_url.rstrip('/')}/v1/models",
+            f"{settings.openai_base_url.rstrip('/')}/models",
             headers={"Authorization": f"Bearer {api_key}"},
         )
     except httpx.HTTPError as exc:
@@ -228,6 +240,37 @@ async def check_openai(settings: Settings, client: httpx.AsyncClient) -> Result:
     return Result("openai", "ok", f"model {settings.openai_model} is available")
 
 
+async def check_nvidia(settings: Settings, client: httpx.AsyncClient) -> Result:
+    api_key = settings.secret_value("nvidia_api_key")
+    if not api_key:
+        return Result("nvidia", "blocked", "missing RESILINET_NVIDIA_API_KEY")
+    try:
+        response = await client.get(
+            f"{settings.nvidia_base_url.rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"},
+        )
+    except httpx.HTTPError as exc:
+        return Result("nvidia", "failed", f"network error: {type(exc).__name__}")
+
+    if response.status_code in (401, 403):
+        return Result("nvidia", "failed", f"key rejected (HTTP {response.status_code})")
+    if response.status_code != 200:
+        return Result(
+            "nvidia", "failed", f"model listing returned HTTP {response.status_code}"
+        )
+    try:
+        models = {item.get("id") for item in response.json().get("data", [])}
+    except (ValueError, AttributeError):
+        return Result("nvidia", "failed", "model listing was not the expected JSON")
+    if settings.nvidia_model not in models:
+        return Result(
+            "nvidia",
+            "blocked",
+            f"model {settings.nvidia_model} is not listed for this key",
+        )
+    return Result("nvidia", "ok", f"model {settings.nvidia_model} is available")
+
+
 async def run(args: argparse.Namespace) -> list[Result]:
     settings = Settings()
     if settings.app_env != "live":
@@ -244,16 +287,28 @@ async def run(args: argparse.Namespace) -> list[Result]:
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.request_timeout_seconds)
     ) as client:
-        return [
-            await check_agentboxd(settings, client, apply=args.apply),
-            await check_mojoauth(
+        agentboxd = await check_agentboxd(settings, client, apply=args.apply)
+        if settings.secret_value("mojoauth_api_key"):
+            mojoauth = await check_mojoauth(
                 settings,
                 client,
                 apply=args.apply,
                 test_email=args.test_email,
                 send_magic_link=args.send_magic_link,
-            ),
-            await check_openai(settings, client),
+            )
+        else:
+            mojoauth = Result(
+                "mojoauth", "blocked", "optional until Phase 3; no identity adapter wired"
+            )
+        intelligence = (
+            await check_nvidia(settings, client)
+            if settings.llm_provider == "nvidia"
+            else await check_openai(settings, client)
+        )
+        return [
+            agentboxd,
+            mojoauth,
+            intelligence,
             Result("momen", "blocked", "editor-only; use docs/momen-setup.md"),
         ]
 
