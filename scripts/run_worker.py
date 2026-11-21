@@ -35,34 +35,40 @@ logger = logging.getLogger("resilinet.worker")
 GAZETTEER_PATH = Path(__file__).resolve().parents[1] / "fixtures" / "gazetteer.json"
 POLL_SECONDS = 1.0
 SCHEMA_WAIT_SECONDS = 60.0
+INCIDENT_WAIT_SECONDS = 300.0
 SCHEMA_RETRY_SECONDS = 2.0
 
 
 async def _incident_id(
     settings: Settings, session_factory: async_sessionmaker[AsyncSession]
 ) -> UUID:
-    deadline = asyncio.get_running_loop().time() + SCHEMA_WAIT_SECONDS
+    started = asyncio.get_running_loop().time()
+    schema_deadline = started + SCHEMA_WAIT_SECONDS
+    incident_deadline = started + INCIDENT_WAIT_SECONDS
     while True:
         try:
             async with session_factory() as session:
                 incident_id = await session.scalar(
                     sa.select(Incident.id).where(Incident.key == settings.incident_key)
                 )
-            break
         except ProgrammingError:
-            if asyncio.get_running_loop().time() >= deadline:
+            if asyncio.get_running_loop().time() >= schema_deadline:
                 raise SystemExit(
                     "database schema is not ready; run `uv run alembic upgrade head` "
                     "before starting the worker"
                 ) from None
             logger.info("worker_waiting_for_schema")
             await asyncio.sleep(SCHEMA_RETRY_SECONDS)
-    if incident_id is None:
-        raise SystemExit(
-            f"incident {settings.incident_key!r} is not provisioned; "
-            "run `uv run python scripts/provision.py`"
-        )
-    return incident_id
+            continue
+        if incident_id is not None:
+            return incident_id
+        if asyncio.get_running_loop().time() >= incident_deadline:
+            raise SystemExit(
+                f"incident {settings.incident_key!r} is not provisioned; "
+                "run `uv run python scripts/provision.py`"
+            )
+        logger.info("worker_waiting_for_incident")
+        await asyncio.sleep(SCHEMA_RETRY_SECONDS)
 
 
 async def run(settings: Settings) -> None:
