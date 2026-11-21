@@ -1,0 +1,36 @@
+# Private product requirements and working plans
+/specs/
+docs/superpowers/
+
+# Secrets
+.env
+.env.*
+!.env.example
+.envrc
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Local databases and generated artifacts
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+artifacts/
+
+# Node tooling (accessibility audits)
+node_modules/
+.pnpm-store/
+playwright-report/
+test-results/
+
+# Editor and OS noise
+.DS_Store
