@@ -65,7 +65,7 @@ class NotificationService:
         for line in lines:
             resource_label = _resource_label(line.resource)
             quantity_label = format_quantity(line.quantity)
-            body.append(f"We received your report for {line.entity_name}.")
+            body.append(f"Thanks for the report — good news, here's where things stand for {line.entity_name}.")
             body.append("")
             if line.allocation_ref and line.supply_name:
                 distance = (
@@ -83,9 +83,10 @@ class NotificationService:
                     and line.requested_quantity.amount > line.quantity.amount
                 ):
                     body.append(
-                        f"This is a partial match for the "
+                        f"We could only match part of this one: "
+                        f"{quantity_label} of the "
                         f"{format_quantity(line.requested_quantity)} requested; "
-                        "the remainder stays open."
+                        "the rest stays open and we'll keep trying."
                     )
                 body.append(
                     "This is a proposal, not a shipment or a dispatch. A depot "
@@ -95,12 +96,13 @@ class NotificationService:
                 body.append(f"Reference: {line.need_ref}")
                 body.append(
                     f"No stock is currently reserved for {quantity_label} of "
-                    f"{resource_label}. The need remains open for matching."
+                    f"{resource_label}. The need stays open and we'll keep matching it."
                 )
             if line.quantity.source.value == "estimated":
                 body.append(
-                    f"Quantity: {quantity_label} of {resource_label}, estimated from "
-                    f"{line.headcount or 0} people using planning rates for one day."
+                    f"That {quantity_label} of {resource_label} is estimated from "
+                    f"{line.headcount or 0} people using one-day planning rates, "
+                    "so treat it as approximate."
                 )
             body.append(
                 f'Reply "QUERY STATUS {line.need_ref}" for an update.'
@@ -108,8 +110,8 @@ class NotificationService:
             body.append("")
         if unverified:
             body.append(
-                "Your sender address is not verified yet. Verification upgrades "
-                "trust but does not change this recommendation."
+                "One housekeeping note: your email address isn't verified yet. "
+                "Verifying builds trust, but it doesn't change this recommendation."
             )
         return _reply_to(message, "\n".join(body).strip())
 
@@ -119,7 +121,7 @@ class NotificationService:
         entity_name: str,
         lines: list[StockLine],
     ) -> OutboundDraft:
-        body = [f"Stock recorded for {entity_name}."]
+        body = [f"Stock recorded for {entity_name} — thanks for the update."]
         for line in lines:
             body.append(
                 f"- {format_quantity(line.quantity)} of {_resource_label(line.resource)} on hand"
@@ -140,30 +142,35 @@ class NotificationService:
 
     def clarification_text(self, fields: list[str]) -> str:
         labels = ", ".join(field.replace("_", " ") for field in fields)
+        count = f"{len(fields)} detail" + ("" if len(fields) == 1 else "s")
         return (
-            "We received your message but need one more detail before we can match it: "
-            f"{labels}. Please reply with the {labels}. We will not guess a location, "
-            "quantity, or resource."
+            "Thanks for getting in touch — before I can match this, I'm missing "
+            f"{count}: {labels}. Just reply with the {labels} and I'll carry on "
+            "from here. I won't guess at a location, quantity, or resource — "
+            "I'd rather ask than get it wrong."
         )
 
     def split_text(self) -> str:
         return (
-            "Your message appears to describe more than one place, entity, or kind of "
-            "report. We did not guess which item belongs where. Please send one message "
-            "per place and per need-or-supply report, and include the missing details. "
+            "Thanks, but your message seems to cover more than one place, shelter, "
+            "or kind of request, and I don't want to mix them up — so I haven't "
+            "logged anything yet. Please send one message per place, with one "
+            "need-or-supply update in each, and include the missing details. "
             "No allocation was created and no stock changed."
         )
 
     def clarification_merged_text(self) -> str:
         return (
-            "Thank you — the missing details were added to your original report. "
-            "The report is now ready for matching. This acknowledgement is not a "
-            "reservation, confirmation, or delivery."
+            "Got it, thanks — the missing details were added to your original "
+            "report, and it's now ready for matching. This note itself doesn't "
+            "reserve or promise anything: it's not a reservation, "
+            "confirmation, or delivery."
         )
 
     def query_text(self) -> str:
         return (
-            "Status queries are read-only. Reply with a line such as:\n\n"
+            "Happy to look that up — but status checks are read-only, so nothing "
+            "will change. Reply with a line such as:\n\n"
             "QUERY STATUS RN-000000\n\n"
             "A reference code identifies a need (RN-) or one allocation (AL-). "
             "Changing stock, confirming an allocation, reporting a delivery, or "
@@ -173,42 +180,45 @@ class NotificationService:
 
     def action_required_text(self) -> str:
         return (
-            "We received your message, but it did not change any stock, allocation, "
-            "or need. Stock snapshots, confirmations, delivery reports, and "
-            "cancellations require a verified single-use action link sent to an "
-            "authorized participant. Email text alone is never applied as a change.\n\n"
+            "Thanks — I can see you want to change stock or an allocation, but I "
+            "can't apply that from an email alone: your message did not change "
+            "any stock, allocation, or need. Stock snapshots, confirmations, "
+            "delivery reports, and cancellations need a verified single-use "
+            "action link sent to an authorized participant. Email text alone is "
+            "never applied as a change.\n\n"
             "For a read-only status check, reply with: QUERY STATUS RN-000000"
         )
 
     def human_review_text(self, reason: str | None = None) -> str:
         detail = f" ({reason})" if reason else ""
         return (
-            "We received your reply, but one of the details is still ambiguous"
-            f"{detail}. A coordinator will review the report before any stock is "
-            "reserved or promised. No allocation was created and no stock changed."
+            "Thanks for the extra detail — but one part is still ambiguous"
+            f"{detail}, so I can't safely match it yet. A coordinator will review "
+            "the report before any stock is reserved or promised. No allocation "
+            "was created and no stock changed."
         )
 
     def deadline_ack_text(self) -> str:
         return (
-            "We received your message and it is still being processed. You do "
-            "not need to send it again; we will reply on this thread when there "
-            "is an update. No allocation was created and no stock changed yet."
+            "Thanks — your message is with me and still being processed. No need "
+            "to send it again; I'll reply on this thread as soon as there's an "
+            "update. Nothing is reserved or changed yet."
         )
 
     def processing_failed_text(self) -> str:
         return (
-            "We received your message, but we could not process it "
-            "automatically. A coordinator has been notified and will review "
-            "it. You do not need to send it again, and no stock was changed "
-            "by this failure."
+            "Thanks for writing — but something went wrong on my side and I "
+            "couldn't process your message automatically. A coordinator has "
+            "been notified and will take a look. You don't need to send it "
+            "again, and your message changed no stock."
         )
 
     def wrong_sender_text(self) -> str:
         return (
-            "This reply could not be applied to the earlier report because it came "
-            "from a different email address. The original request is unchanged. "
+            "I couldn't apply this reply to the earlier report because it came "
+            "from a different email address — the original request is unchanged. "
             "Only the sender of the original report, or an assigned coordinator, "
-            "can supply its missing details."
+            "can fill in its missing details."
         )
 
     def compose_snapshot_rejected(
@@ -217,9 +227,10 @@ class NotificationService:
         entity_name: str,
     ) -> OutboundDraft:
         body = (
-            f"The stock snapshot for {entity_name} was not applied because it would "
-            "leave existing reservations unsupported. The previous stock figure is "
-            "unchanged. A coordinator must review and reconcile it."
+            f"I couldn't apply the stock snapshot for {entity_name} because it "
+            "would leave existing reservations without stock to back them. Your "
+            "previous stock figure still stands — a coordinator needs to review "
+            "and reconcile this."
         )
         return _reply_to(message, body)
 
@@ -237,7 +248,7 @@ class NotificationService:
         action_url: str,
     ) -> str:
         return (
-            f"You coordinate stock for {supply_entity}.\n\n"
+            f"You coordinate stock for {supply_entity} — a volunteer needs a decision.\n\n"
             f"ResiliNet recommends allocating {quantity_label} of "
             f"{resource_label} to {need_entity} (need {need_ref}, allocation "
             f"{allocation_ref}). This is a recommendation, not a dispatch.\n\n"
@@ -250,8 +261,8 @@ class NotificationService:
 
     def operator_review_text(self, *, review_url: str) -> str:
         return (
-            "A relief report needs operator review before any stock can be "
-            "committed.\n\n"
+            "A relief report needs a person to look at it before any stock can "
+            "be committed.\n\n"
             f"Open the review queue: {review_url}\n\n"
             "Signing in is required. This message contains no action link "
             "and cannot change any stock or allocation."
@@ -261,7 +272,7 @@ class NotificationService:
         self, *, need_ref: str, entity_name: str, resource_label: str
     ) -> str:
         return (
-            f"We received your report for {entity_name}. It matches an "
+            f"Thanks for the report — it backs up an "
             f"existing open request for {resource_label} (reference "
             f"{need_ref}), so it was recorded as corroboration. The "
             "existing quantity was not changed.\n\n"
@@ -271,35 +282,37 @@ class NotificationService:
     def quantity_review_text(self, *, resource_labels: list[str]) -> str:
         resources = ", ".join(resource_labels)
         return (
-            f"We received your report, but the quantity for {resources} "
-            "could not be accepted as stated. That part of your report was "
-            "not applied, and a coordinator will review it. Any other part "
-            "of your report is handled separately in its own reply. "
-            "Quantities are never guessed or reduced silently."
+            f"Thanks, but I couldn't accept the quantity for {resources} "
+            "as stated, so that part of your report was left out while a "
+            "coordinator reviews it. Anything else in your report is handled "
+            "separately in its own reply. Quantities are never guessed or "
+            "reduced silently — what you wrote is what gets reviewed."
         )
 
     def medical_review_text(self) -> str:
         return (
-            "We received your report. Because it includes medical needs, a "
+            "Thanks for the report. Because it involves medical needs, a "
             "coordinator must review it before any medicine or first aid "
-            "can be promised. No stock has been reserved for the medical "
+            "can be promised. Nothing is reserved for the medical "
             "items, and this message is not a supply promise. Medical "
-            "reports are given scheduling priority for review."
+            "reports jump the queue and get review priority."
         )
 
     def medical_corroboration_text(self) -> str:
         return (
-            "We received this medical report and attached it to the existing "
-            "request. A coordinator must review the medical content. Existing "
-            "reservations are unchanged and are also under review; this report "
-            "does not promise new stock. No goods were dispatched or delivered."
+            "Thanks — I've attached this medical report to the existing "
+            "request. A coordinator must review the medical content before "
+            "anything moves. Existing reservations are unchanged and are also "
+            "under review; this report doesn't promise new stock, and nothing "
+            "was dispatched or delivered."
         )
 
     def reference_not_found_text(self) -> str:
         return (
             "No need or allocation with that reference exists in this "
-            "incident. Nothing was changed and no review was opened. Check the "
-            "reference and send a new query if needed."
+            "incident. Nothing was changed and no review was opened. "
+            "Double-check the reference (RN- for a need, AL- for an "
+            "allocation) and send a new query if needed."
         )
 
     def allocation_status_text(
@@ -318,7 +331,7 @@ class NotificationService:
             f"Status: {status_label}\n"
             f"Reserved quantity: {quantity_label}\n"
             f"Delivered: {delivered_label}\n\n"
-            "This query changed nothing. Only the original requester, the "
+            "This lookup changed nothing, as always. Only the original requester, the "
             "entity coordinator, or an operator may read this reference."
         )
 
@@ -328,8 +341,9 @@ class NotificationService:
         return (
             f"An earlier recommendation (allocation {allocation_ref}) for "
             f"need {need_ref} was cancelled because the available stock "
-            "changed. The need remains open and will be matched again when "
-            "stock is available. No goods were dispatched or delivered."
+            "changed. The need stays open and will be matched again once "
+            "stock is available. No goods were dispatched or delivered — "
+            "nothing has moved."
         )
 
     def confirm_completed_text(
@@ -343,8 +357,8 @@ class NotificationService:
         return (
             f"Allocation {allocation_ref} for need {need_ref} is now confirmed: "
             f"{quantity_label} of {resource_label}. This commits the reserved "
-            "stock to that need. It is not a shipment or a delivery; the "
-            "requester must report a delivery separately when goods arrive."
+            "stock to that need. It's not a shipment or a delivery — please "
+            "report a delivery separately once the goods actually arrive."
         )
 
     def delivery_recorded_text(
@@ -359,7 +373,7 @@ class NotificationService:
             f"A delivery of {quantity_label} of {resource_label} was recorded "
             f"against allocation {allocation_ref} (need {need_ref}). On-hand "
             "stock was reduced by that amount exactly once. If this is wrong, "
-            "tell a coordinator; do not send a second delivery report."
+            "tell a coordinator — and please don't send a second delivery report."
         )
 
     def cancellation_completed_text(
@@ -368,7 +382,7 @@ class NotificationService:
         return (
             f"{reference} was cancelled. Any remaining reservation for "
             f"{released_label} of {resource_label} was released. Delivered "
-            "history is unchanged. No goods were dispatched by this action."
+            "history is untouched. No goods were dispatched by this action."
         )
 
     def supply_applied_text(
@@ -379,11 +393,11 @@ class NotificationService:
         resource_label: str,
     ) -> str:
         return (
-            f"Your on-hand snapshot for {entity_name} was applied: "
+            f"Done — your on-hand snapshot for {entity_name} was applied: "
             f"{quantity_label} of {resource_label}. A snapshot is an absolute "
             "figure, not an addition. Any reservation the snapshot cannot "
             "support is cancelled newest-first, and affected requesters are "
-            "notified. This does not dispatch or deliver anything."
+            "notified. This doesn't dispatch or deliver anything."
         )
 
     def action_request_text(
@@ -394,13 +408,13 @@ class NotificationService:
         expires_minutes: int = 30,
     ) -> str:
         return (
-            "ResiliNet received an email action that was not applied directly; "
-            "email text can never change stock or an allocation.\n\n"
+            "ResiliNet got an email action it can't apply directly — email text "
+            "can never change stock or an allocation.\n\n"
             f"{summary}\n\n"
             "Review and submit it with your private single-use link:\n"
             f"{action_url}\n\n"
             f"The link expires in {expires_minutes} minutes, works once, and "
-            "only for the verified address that received it. If you did not "
+            "only for the verified address that received it. If you didn't "
             "send this request, do not open the link and tell an operator."
         )
 
@@ -424,7 +438,7 @@ class NotificationService:
             f"Reserved: {reserved_label}\n"
             f"Delivered: {delivered_label}\n"
             f"Allocations: {allocations}\n\n"
-            "This query changed nothing. Email commands other than QUERY STATUS "
+            "This lookup changed nothing, as always. Email commands other than QUERY STATUS "
             "are never applied; confirmations, deliveries, cancellations, and "
             "stock changes require a verified single-use action link."
         )
@@ -450,7 +464,7 @@ def recommendation_body(lines: list[RecommendationText], *, unverified: bool) ->
     """Plain-language recommendation text shared by every reply path."""
     body: list[str] = []
     for line in lines:
-        body.append(f"We received your report for {line.entity_name}.")
+        body.append(f"Thanks for the report — good news, here's where things stand for {line.entity_name}.")
         body.append("")
         if line.allocation_ref:
             distance = (
@@ -466,8 +480,9 @@ def recommendation_body(lines: list[RecommendationText], *, unverified: bool) ->
             )
             if line.requested_label is not None:
                 body.append(
-                    f"This is a partial match for the {line.requested_label} "
-                    "requested; the remainder stays open."
+                    f"We could only match part of this one: "
+                    f"{line.quantity_label} of the {line.requested_label} "
+                    "requested, so the rest stays open and we'll keep trying."
                 )
             body.append(
                 "This is a proposal, not a shipment or a dispatch. A depot "
@@ -477,32 +492,33 @@ def recommendation_body(lines: list[RecommendationText], *, unverified: bool) ->
             body.append(f"Reference: {line.need_ref}")
             body.append(
                 f"No stock is currently reserved for {line.quantity_label} of "
-                f"{line.resource_label}. The need remains open for matching."
+                f"{line.resource_label}. The need stays open and we'll keep matching it."
             )
         if line.estimated:
             body.append(
-                f"Quantity: {line.quantity_label} of {line.resource_label}, "
-                f"estimated from {line.headcount or 0} people using planning "
-                "rates for one day."
+                f"That {line.quantity_label} of {line.resource_label} is estimated from "
+                f"{line.headcount or 0} people using one-day planning rates, "
+                "so treat it as approximate."
             )
         body.append(f'Reply "QUERY STATUS {line.need_ref}" for an update.')
         body.append("")
     if unverified:
         body.append(
-            "Your sender address is not verified yet. Verification upgrades "
-            "trust but does not change this recommendation."
+            "One housekeeping note: your email address isn't verified yet. "
+            "Verifying builds trust, but it doesn't change this recommendation."
         )
     return "\n".join(body).strip()
 
 
 def stock_body(entity_name: str, display_lines: list[str]) -> str:
     """Stock acknowledgement text for a recorded absolute snapshot."""
-    body = [f"Stock recorded for {entity_name}."]
+    body = [f"Stock recorded for {entity_name} — thanks for the update."]
     body.extend(f"- {line} on hand" for line in display_lines)
     body.append("")
     body.append(
-        "This is an absolute on-hand snapshot. Reservations are tracked "
-        "separately and do not reduce the reported on-hand figure."
+        "This is an absolute on-hand snapshot — the figure you reported, not "
+        "a running total. Reservations are tracked separately and don't "
+        "reduce the reported on-hand figure."
     )
     return "\n".join(body)
 
