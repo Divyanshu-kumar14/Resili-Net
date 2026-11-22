@@ -107,7 +107,7 @@ def make_event(
 
 def test_migration_creates_the_core_schema(database_path: Path) -> None:
     assert table_names(database_path) >= CORE_TABLES
-    assert alembic_revision(database_path) == "0002"
+    assert alembic_revision(database_path) == "0004"
 
 
 async def test_duplicate_event_creates_one_message_and_one_job(

@@ -24,6 +24,8 @@ from ..ports import (
     ProviderUnavailableError,
     RawMessage,
     SentReceipt,
+    VerificationRequest,
+    VerifiedIdentity,
 )
 from ..schemas import CriticContext, CriticVerdict, GeoConfidence, ParsedEmail
 from .agentboxd import client_id_for_incident, parse_signed_webhook
@@ -374,6 +376,10 @@ class FakeIntelligenceProvider:
                 return parsed.model_copy(deep=True)
         raise ExtractionError("no deterministic extraction fixture matched")
 
+    def set_fixture(self, marker: str, parsed: ParsedEmail) -> None:
+        """Add or replace one deterministic extraction fixture."""
+        self._fixtures[marker] = parsed
+
     async def critique(self, proposal: CriticContext) -> CriticVerdict:
         self.critique_calls.append(proposal)
         if self.fail_next_critique is not None:
@@ -427,10 +433,72 @@ class FakeGeocoder:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FakeMagicLink:
+    email: str
+    redirect_url: str
+    state_id: str
+
+
+class FakeAuthProvider:
+    """Deterministic MojoAuth-shaped magic-link provider.
+
+    ``sent`` holds successfully requested links, ``attempts`` every provider
+    call (including failures), and ``fail_next_send`` / ``fail_next_verify``
+    inject the same errors a live adapter raises.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[FakeMagicLink] = []
+        self.attempts: list[str] = []
+        self.fail_next_send: AdapterError | None = None
+        self.fail_next_verify: AdapterError | None = None
+        self.next_email_override: str | None = None
+        self.next_verified_override: bool | None = None
+        self._states: dict[str, str] = {}
+        self._counter = 0
+
+    async def send_magic_link(
+        self, email: str, redirect_url: str
+    ) -> VerificationRequest:
+        self.attempts.append(email)
+        if self.fail_next_send is not None:
+            failure = self.fail_next_send
+            self.fail_next_send = None
+            raise failure
+        self._counter += 1
+        state_id = f"state-{self._counter}"
+        self._states[state_id] = email
+        self.sent.append(
+            FakeMagicLink(email=email, redirect_url=redirect_url, state_id=state_id)
+        )
+        return VerificationRequest(state_id=state_id, status="success")
+
+    async def verify_callback(self, params: Mapping[str, str]) -> VerifiedIdentity:
+        if self.fail_next_verify is not None:
+            failure = self.fail_next_verify
+            self.fail_next_verify = None
+            raise failure
+        state_id = str(params.get("state_id", ""))
+        email = self._states.get(state_id)
+        if not email:
+            raise AdapterError("unknown or missing verification state")
+        if self.next_email_override is not None:
+            email = self.next_email_override
+        verified = (
+            True if self.next_verified_override is None else self.next_verified_override
+        )
+        return VerifiedIdentity(
+            email=email, verified=verified, provider_subject=f"subject-{state_id}"
+        )
+
+
 __all__ = [
+    "FakeAuthProvider",
     "FakeGeocoder",
     "FakeInboxProvider",
     "FakeIntelligenceProvider",
+    "FakeMagicLink",
     "SentDelivery",
     "provider_unavailable",
 ]

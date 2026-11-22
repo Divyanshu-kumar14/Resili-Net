@@ -31,6 +31,7 @@ from ..models import (
     Sender,
 )
 from ..ports import InboundEvent
+from ..security import normalize_email
 from .events import record_event
 
 #: Persisted rolling limits from the P0 plan.
@@ -59,7 +60,7 @@ class AcceptResult:
 
 def normalize_address(address: str) -> str:
     """Normalise an email address for identity comparison only."""
-    return unicodedata.normalize("NFKC", address).strip().casefold()
+    return normalize_email(address)
 
 
 def normalize_inbound_text(text: str) -> str:

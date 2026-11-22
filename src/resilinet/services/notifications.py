@@ -272,6 +272,41 @@ class NotificationService:
             "reports are given scheduling priority for review."
         )
 
+    def medical_corroboration_text(self) -> str:
+        return (
+            "We received this medical report and attached it to the existing "
+            "request. A coordinator must review the medical content. Existing "
+            "reservations are unchanged and are also under review; this report "
+            "does not promise new stock. No goods were dispatched or delivered."
+        )
+
+    def reference_not_found_text(self) -> str:
+        return (
+            "No need or allocation with that reference exists in this "
+            "incident. Nothing was changed and no review was opened. Check the "
+            "reference and send a new query if needed."
+        )
+
+    def allocation_status_text(
+        self,
+        *,
+        allocation_ref: str,
+        need_ref: str,
+        status_label: str,
+        resource_label: str,
+        quantity_label: str,
+        delivered_label: str,
+    ) -> str:
+        return (
+            f"Read-only status for {allocation_ref} (need {need_ref}):\n\n"
+            f"Resource: {resource_label}\n"
+            f"Status: {status_label}\n"
+            f"Reserved quantity: {quantity_label}\n"
+            f"Delivered: {delivered_label}\n\n"
+            "This query changed nothing. Only the original requester, the "
+            "entity coordinator, or an operator may read this reference."
+        )
+
     def allocation_cancelled_text(
         self, *, allocation_ref: str, need_ref: str
     ) -> str:
@@ -280,6 +315,103 @@ class NotificationService:
             f"need {need_ref} was cancelled because the available stock "
             "changed. The need remains open and will be matched again when "
             "stock is available. No goods were dispatched or delivered."
+        )
+
+    def confirm_completed_text(
+        self,
+        *,
+        allocation_ref: str,
+        need_ref: str,
+        quantity_label: str,
+        resource_label: str,
+    ) -> str:
+        return (
+            f"Allocation {allocation_ref} for need {need_ref} is now confirmed: "
+            f"{quantity_label} of {resource_label}. This commits the reserved "
+            "stock to that need. It is not a shipment or a delivery; the "
+            "requester must report a delivery separately when goods arrive."
+        )
+
+    def delivery_recorded_text(
+        self,
+        *,
+        allocation_ref: str,
+        need_ref: str,
+        quantity_label: str,
+        resource_label: str,
+    ) -> str:
+        return (
+            f"A delivery of {quantity_label} of {resource_label} was recorded "
+            f"against allocation {allocation_ref} (need {need_ref}). On-hand "
+            "stock was reduced by that amount exactly once. If this is wrong, "
+            "tell a coordinator; do not send a second delivery report."
+        )
+
+    def cancellation_completed_text(
+        self, *, reference: str, released_label: str, resource_label: str
+    ) -> str:
+        return (
+            f"{reference} was cancelled. Any remaining reservation for "
+            f"{released_label} of {resource_label} was released. Delivered "
+            "history is unchanged. No goods were dispatched by this action."
+        )
+
+    def supply_applied_text(
+        self,
+        *,
+        entity_name: str,
+        quantity_label: str,
+        resource_label: str,
+    ) -> str:
+        return (
+            f"Your on-hand snapshot for {entity_name} was applied: "
+            f"{quantity_label} of {resource_label}. A snapshot is an absolute "
+            "figure, not an addition. Any reservation the snapshot cannot "
+            "support is cancelled newest-first, and affected requesters are "
+            "notified. This does not dispatch or deliver anything."
+        )
+
+    def action_request_text(
+        self,
+        *,
+        summary: str,
+        action_url: str,
+        expires_minutes: int = 30,
+    ) -> str:
+        return (
+            "ResiliNet received an email action that was not applied directly; "
+            "email text can never change stock or an allocation.\n\n"
+            f"{summary}\n\n"
+            "Review and submit it with your private single-use link:\n"
+            f"{action_url}\n\n"
+            f"The link expires in {expires_minutes} minutes, works once, and "
+            "only for the verified address that received it. If you did not "
+            "send this request, do not open the link and tell an operator."
+        )
+
+    def status_text(
+        self,
+        *,
+        need_ref: str,
+        resource_label: str,
+        status_label: str,
+        required_label: str,
+        reserved_label: str,
+        delivered_label: str,
+        allocation_refs: list[str],
+    ) -> str:
+        allocations = ", ".join(allocation_refs) if allocation_refs else "none"
+        return (
+            f"Read-only status for {need_ref}:\n\n"
+            f"Resource: {resource_label}\n"
+            f"Status: {status_label}\n"
+            f"Required: {required_label}\n"
+            f"Reserved: {reserved_label}\n"
+            f"Delivered: {delivered_label}\n"
+            f"Allocations: {allocations}\n\n"
+            "This query changed nothing. Email commands other than QUERY STATUS "
+            "are never applied; confirmations, deliveries, cancellations, and "
+            "stock changes require a verified single-use action link."
         )
 
 
@@ -305,15 +437,16 @@ def recommendation_body(lines: list[RecommendationText], *, unverified: bool) ->
     for line in lines:
         body.append(f"We received your report for {line.entity_name}.")
         body.append("")
-        if line.allocation_ref and line.supply_name:
+        if line.allocation_ref:
             distance = (
                 f" (approx. {line.distance_km.quantize(Decimal('0.1'))} km away)"
                 if line.distance_km is not None
                 else ""
             )
+            supplier = line.supply_name or "The supplying depot"
             body.append(f"Reference: {line.need_ref} (allocation {line.allocation_ref})")
             body.append(
-                f"Recommended: {line.supply_name} is recommended to supply "
+                f"Recommended: {supplier} is recommended to supply "
                 f"{line.quantity_label} of {line.resource_label}{distance}."
             )
             if line.requested_label is not None:
@@ -482,6 +615,7 @@ class OutboxService:
         if claim is None:
             return False
         row, message = claim
+        claimed_attempt = row.attempt_count
         draft = OutboundDraft(
             mailbox_id=(
                 message.mailbox_id
@@ -502,15 +636,25 @@ class OutboxService:
                 receipt = await self._inbox.send(draft, row.idempotency_key)
         except ProviderUnavailableError as exc:
             await self._record_failure(
-                row.id, retryable=exc.retryable, detail=str(exc), error_type=type(exc).__name__
+                row.id,
+                retryable=exc.retryable,
+                detail=str(exc),
+                error_type=type(exc).__name__,
+                expected_attempt=claimed_attempt,
             )
             return True
         except Exception as exc:
             await self._record_failure(
-                row.id, retryable=False, detail=str(exc), error_type=type(exc).__name__
+                row.id,
+                retryable=False,
+                detail=str(exc),
+                error_type=type(exc).__name__,
+                expected_attempt=claimed_attempt,
             )
             return True
-        await self._record_sent(row.id, receipt.provider_message_id)
+        await self._record_sent(
+            row.id, receipt.provider_message_id, expected_attempt=claimed_attempt
+        )
         return True
 
     async def _claim(self, outbox_id: UUID) -> tuple[OutboundEmail, Message | None] | None:
@@ -582,10 +726,25 @@ class OutboxService:
             )
             return row, message
 
-    async def _record_sent(self, outbox_id: UUID, provider_message_id: str) -> None:
+    async def _record_sent(
+        self,
+        outbox_id: UUID,
+        provider_message_id: str,
+        *,
+        expected_attempt: int,
+    ) -> None:
         async with self._session_factory() as session, session.begin():
-            row = await session.get(OutboundEmail, outbox_id)
+            row = await session.get(
+                OutboundEmail, outbox_id, with_for_update=True
+            )
             if row is None:  # pragma: no cover - FK guarantees the row
+                return
+            if (
+                row.status is not OutboundStatus.SENDING
+                or row.attempt_count != expected_attempt
+            ):
+                # A late worker lost its lease; never overwrite the state of
+                # the worker that reclaimed the row.
                 return
             row.status = OutboundStatus.SENT
             row.sent_at = self._clock()
@@ -602,11 +761,24 @@ class OutboxService:
             )
 
     async def _record_failure(
-        self, outbox_id: UUID, *, retryable: bool, detail: str, error_type: str
+        self,
+        outbox_id: UUID,
+        *,
+        retryable: bool,
+        detail: str,
+        error_type: str,
+        expected_attempt: int,
     ) -> None:
         async with self._session_factory() as session, session.begin():
-            row = await session.get(OutboundEmail, outbox_id)
+            row = await session.get(
+                OutboundEmail, outbox_id, with_for_update=True
+            )
             if row is None:  # pragma: no cover - FK guarantees the row
+                return
+            if (
+                row.status is not OutboundStatus.SENDING
+                or row.attempt_count != expected_attempt
+            ):
                 return
             can_retry = retryable and row.attempt_count < self._max_attempts
             row.status = (
@@ -659,7 +831,9 @@ class OutboxService:
 
 
 def reply_subject(subject: str) -> str:
-    clean = subject.strip() or "Your ResiliNet report"
+    # Collapse CR/LF and other whitespace so an inbound subject can never
+    # inject a second header into the outbound message.
+    clean = " ".join(subject.split()) or "Your ResiliNet report"
     return clean if clean.casefold().startswith("re:") else f"Re: {clean}"
 
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID, uuid4
 
 import sqlalchemy as sa
@@ -134,6 +135,44 @@ async def test_provider_timeout_retries_under_the_same_idempotency_key(
     assert await outbox.deliver_due() is True
     assert len(inbox.sent_messages) == 1
     assert inbox.sent_messages[0].idempotency_key == f"outbox:{row_id}"
+
+
+async def test_late_worker_cannot_overwrite_a_reclaimed_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    outbox, _inbox, _mailbox, message, sender = await make_outbox(
+        session_factory, incident_id, clock
+    )
+    row_id = await enqueue_one(session_factory, message, sender)
+
+    first = await outbox._claim(row_id)
+    assert first is not None
+    assert first[0].attempt_count == 1
+    async with transaction(session_factory) as session:
+        row = await session.get(OutboundEmail, row_id)
+        assert row is not None
+        row.updated_at = NOW - timedelta(seconds=600)
+
+    second = await outbox._claim(row_id)
+    assert second is not None
+    assert second[0].attempt_count == 2
+
+    # The first worker finishes late; its attempt number no longer matches.
+    await outbox._record_sent(row_id, "late-worker", expected_attempt=1)
+    async with session_factory() as session:
+        row = await session.get(OutboundEmail, row_id)
+        assert row is not None
+        assert row.status is OutboundStatus.SENDING
+        assert row.provider_message_id is None
+
+    await outbox._record_sent(row_id, "current-worker", expected_attempt=2)
+    async with session_factory() as session:
+        row = await session.get(OutboundEmail, row_id)
+        assert row is not None
+        assert row.status is OutboundStatus.SENT
+        assert row.provider_message_id == "current-worker"
 
 
 async def test_two_workers_cannot_deliver_the_same_row_twice(

@@ -35,22 +35,20 @@ def test_live_configuration_requires_secrets() -> None:
     message = str(excinfo.value)
     assert "agentboxd_api_key" in message
     assert "openai_api_key" in message
-    assert "mojoauth_api_key" not in message
+    assert "mojoauth_api_key" in message
 
 
-def test_live_mode_does_not_require_mojoauth_until_identity_lands() -> None:
-    settings = Settings(
-        app_env="live",
-        database_url="postgresql+asyncpg://user:pass@localhost/resilinet",
-        agentboxd_api_key="key",
-        agentboxd_webhook_secret="secret",
-        mojoauth_api_key=None,
-        openai_api_key="key",
-        _env_file=None,
-    )
-
-    assert settings.is_live
-    assert settings.secret_value("mojoauth_api_key") is None
+def test_live_mode_requires_mojoauth_for_verified_actions() -> None:
+    with pytest.raises(ValidationError, match="mojoauth_api_key"):
+        Settings(
+            app_env="live",
+            database_url="postgresql+asyncpg://user:pass@localhost/resilinet",
+            agentboxd_api_key="key",
+            agentboxd_webhook_secret="secret",
+            mojoauth_api_key=None,
+            openai_api_key="key",
+            _env_file=None,
+        )
 
 
 def test_create_app_rejects_a_live_environment_without_secrets(monkeypatch: pytest.MonkeyPatch) -> None:

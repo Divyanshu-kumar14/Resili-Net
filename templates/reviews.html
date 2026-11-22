@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Review queue · ResiliNet{% endblock %}
+{% block content %}
+<h1>Review queue</h1>
+<p>Signed in as <strong>{{ principal.address }}</strong>.</p>
+{% if cases %}
+<table>
+  <caption class="muted">Open review cases for this incident</caption>
+  <thead>
+    <tr><th scope="col">Kind</th><th scope="col">Reason</th><th scope="col">Need</th><th scope="col">Created</th></tr>
+  </thead>
+  <tbody>
+    {% for case in cases %}
+    <tr>
+      <td>{{ case.kind.value }}</td>
+      <td><a href="/operator/reviews/{{ case.id }}">{{ case.reason }}</a></td>
+      <td>{{ case.need_ref or "—" }}</td>
+      <td>{{ case.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No open review cases.</p>
+{% endif %}
+<form method="post" action="/auth/logout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit">Sign out</button>
+</form>
+{% endblock %}

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from .api.routes import router
-from .composition import build_inbox_provider
+from .composition import build_auth_provider, build_inbox_provider
 from .config import Settings
 from .db import create_engine, create_session_factory
 from .observability import (
@@ -21,7 +22,10 @@ from .observability import (
     configure_logging,
     install_access_log_redaction,
 )
-from .ports import InboxProvider
+from .ports import AuthProvider, InboxProvider
+from .security import private_headers
+from .web.actions import router as actions_router
+from .web.reviews import router as reviews_router
 from .workers.runtime import RETRY_RUNTIME_SECONDS, run_worker
 
 logger = logging.getLogger("resilinet.main")
@@ -40,6 +44,8 @@ class Container:
     session_factory: async_sessionmaker[AsyncSession] | None = None
     inbox: InboxProvider | None = None
     engine: AsyncEngine | None = None
+    auth: AuthProvider | None = None
+    clock: Callable[[], datetime] | None = None
 
 
 def build_container(settings: Settings) -> Container:
@@ -50,6 +56,7 @@ def build_container(settings: Settings) -> Container:
         session_factory=create_session_factory(engine),
         inbox=build_inbox_provider(settings) if settings.is_live else None,
         engine=engine,
+        auth=build_auth_provider(settings),
     )
 
 
@@ -132,7 +139,18 @@ def create_app(
     app.state.settings = resolved
     app.state.container = container if container is not None else build_container(resolved)
     app.add_middleware(TraceIdMiddleware)
+
+    @app.middleware("http")
+    async def private_page_headers(request: Any, call_next: Any) -> Any:
+        response = await call_next(request)
+        if str(request.url.path).startswith(("/actions/", "/operator/", "/auth/")):
+            for name, value in private_headers().items():
+                response.headers[name] = value
+        return response
+
     app.include_router(router)
+    app.include_router(actions_router)
+    app.include_router(reviews_router)
     logger.info("application_started", extra={"mode": resolved.app_env})
     return app
 

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from .adapters.agentboxd import AgentboxdInboxProvider
+from .adapters.mojoauth import MojoAuthAuthProvider
 from .adapters.nvidia import NvidiaIntelligenceProvider
 from .adapters.openai import OpenAIIntelligenceProvider
 from .config import Settings
-from .ports import InboxProvider, IntelligenceProvider
+from .ports import AuthProvider, InboxProvider, IntelligenceProvider
 
 
 def build_inbox_provider(settings: Settings) -> InboxProvider:
@@ -20,6 +21,23 @@ def build_inbox_provider(settings: Settings) -> InboxProvider:
         api_key=api_key,
         webhook_secret=webhook_secret,
         base_url=settings.agentboxd_base_url,
+        timeout_seconds=settings.request_timeout_seconds,
+    )
+
+
+def build_auth_provider(settings: Settings) -> AuthProvider | None:
+    """Return the MojoAuth adapter when an API key is configured.
+
+    Test and replay modes deliberately run without it so no external call can
+    occur; routes then serve only generic pages. Live mode fails startup
+    earlier if the key is absent.
+    """
+    api_key = settings.secret_value("mojoauth_api_key")
+    if api_key is None:
+        return None
+    return MojoAuthAuthProvider(
+        api_key=api_key,
+        base_url=settings.mojoauth_base_url,
         timeout_seconds=settings.request_timeout_seconds,
     )
 
@@ -57,4 +75,4 @@ def build_intelligence_provider(settings: Settings) -> IntelligenceProvider:
     )
 
 
-__all__ = ["build_inbox_provider", "build_intelligence_provider"]
+__all__ = ["build_auth_provider", "build_inbox_provider", "build_intelligence_provider"]

@@ -15,11 +15,12 @@ from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..adapters.nominatim import Gazetteer, NominatimGeocoder
-from ..composition import build_intelligence_provider
+from ..composition import build_auth_provider, build_intelligence_provider
 from ..config import Settings
 from ..models import Incident, JobType
 from ..ports import InboxProvider, IntelligenceProvider
 from ..services.extraction import ExtractionService
+from ..services.identity import IdentityService
 from ..services.notifications import NotificationService, OutboxService
 from .handlers import MessageJobHandler
 from .runner import DurableWorker
@@ -98,6 +99,7 @@ async def build_worker_runtime(
         extraction=ExtractionService(incident_id, intelligence, geocoder),
         notifications=NotificationService(),
         intelligence=intelligence,
+        identity=IdentityService(session_factory, build_auth_provider(settings), settings),
         public_base_url=settings.public_base_url,
     )
     worker = DurableWorker(

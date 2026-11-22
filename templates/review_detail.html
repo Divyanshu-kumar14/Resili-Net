@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Review case · ResiliNet{% endblock %}
+{% block content %}
+<h1>Review case: {{ case.kind.value.replace("_", " ") }}</h1>
+<p><a href="/operator/reviews">Back to the queue</a></p>
+{% if error %}
+<p class="error" role="alert">{{ error }}</p>
+{% endif %}
+<dl>
+  <dt>Status</dt><dd>{{ case.status.value }}</dd>
+  <dt>Reason</dt><dd>{{ case.reason }}</dd>
+  {% if need %}
+  <dt>Need</dt><dd>{{ need.ref }} — {{ need.resource.value.replace("_", " ") }} — {{ need.quantity }} {{ need.unit }}</dd>
+  <dt>Need status</dt><dd>{{ need.status.value }}</dd>
+  <dt>Medical or escalated</dt><dd>{{ "yes" if need.needs_human_review else "no" }}</dd>
+  {% endif %}
+  {% if allocation %}
+  <dt>Allocation</dt><dd>{{ allocation.ref }} — {{ allocation.status.value }}</dd>
+  {% endif %}
+  {% if existing_need %}
+  <dt>Possible duplicate of</dt><dd>{{ existing_need.ref }}</dd>
+  {% endif %}
+  <dt>Created</dt><dd>{{ case.created_at.strftime("%Y-%m-%d %H:%M UTC") }}</dd>
+</dl>
+
+<h2>Stored case data</h2>
+<pre>{{ case.payload }}</pre>
+
+{% if excerpt %}
+<h2>Message excerpt</h2>
+<pre>{{ excerpt }}</pre>
+{% endif %}
+
+<h2>Resolve this case</h2>
+<p>Every resolution is a POST with this session's CSRF token and is recorded
+in the audit log. Approval never promises stock: it re-runs normal reservation
+and requester-trust checks.</p>
+
+{% if need %}
+<section class="card" aria-labelledby="approve-heading">
+  <h3 id="approve-heading">Approve the proposal</h3>
+  <p>Clears the review block and schedules ordinary matching for this need.
+  No stock is promised and no allocation is confirmed by this action.</p>
+  <form method="post" action="/operator/reviews/{{ case.id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="resolution" value="APPROVE_PROPOSAL">
+    <button type="submit">Approve and re-run matching</button>
+  </form>
+</section>
+
+<section class="card" aria-labelledby="revise-heading">
+  <h3 id="revise-heading">Revise the need quantity</h3>
+  <form method="post" action="/operator/reviews/{{ case.id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="resolution" value="REVISE_QUANTITY">
+    <label for="quantity">New required quantity ({{ need.unit }})</label>
+    <input id="quantity" name="quantity" type="number" min="0.001" step="0.001"
+           value="{{ need.quantity }}" required>
+    <button type="submit">Revise quantity</button>
+  </form>
+  <p class="muted">A revision below the delivered total is rejected, never
+  clamped.</p>
+</section>
+{% endif %}
+
+<section class="card" aria-labelledby="reject-heading">
+  <h3 id="reject-heading">Reject</h3>
+  <p>Records the refusal. Any linked proposed allocation becomes rejected and
+  releases its reservation.</p>
+  <form method="post" action="/operator/reviews/{{ case.id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="resolution" value="REJECT">
+    <button type="submit">Reject this case</button>
+  </form>
+</section>
+
+{% if case.kind.value == "duplicate" %}
+<section class="card" aria-labelledby="duplicate-heading">
+  <h3 id="duplicate-heading">Mark as duplicate</h3>
+  <p>Preserves both reports and all corroboration; quantities are never
+  merged or overwritten.</p>
+  <form method="post" action="/operator/reviews/{{ case.id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="resolution" value="MARK_DUPLICATE">
+    <button type="submit">Mark duplicate</button>
+  </form>
+</section>
+{% endif %}
+
+{% if case.payload.get("sender_id") and case.payload.get("entity_id") %}
+<section class="card" aria-labelledby="assign-heading">
+  <h3 id="assign-heading">Assign depot coordinator</h3>
+  <p>Grants incident-scoped depot authority to the sender in this case. If a
+  pending stock action is attached, its private single-use link is issued
+  afterwards; nothing is applied automatically.</p>
+  <form method="post" action="/operator/reviews/{{ case.id }}/resolve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="resolution" value="ASSIGN_DEPOT_COORDINATOR">
+    <button type="submit">Assign depot coordinator</button>
+  </form>
+</section>
+{% endif %}
+
+<form method="post" action="/auth/logout">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+  <button type="submit">Sign out</button>
+</form>
+{% endblock %}

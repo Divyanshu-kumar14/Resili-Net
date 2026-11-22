@@ -17,7 +17,7 @@ so recovery can never double-reserve or double-send.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -48,6 +48,7 @@ from ..models import (
     MessageStatus,
     Need,
     OutboundEmail,
+    OutboundStatus,
     ParticipantRole,
     ParticipantRoleKind,
     PendingActionKind,
@@ -64,13 +65,14 @@ from ..ports import (
     RawMessage,
 )
 from ..schemas import (
+    AllocationStatus,
     ClarificationRequired,
     CriticContext,
     NeedStatus,
     ParsedEmail,
     ReportKind,
 )
-from ..services.actions import create_action_grant
+from ..services.actions import ActionIntakeService, amount_label, create_action_grant
 from ..services.allocations import AllocationService, RegistrationResult
 from ..services.clarification import (
     SPLIT_FIELD,
@@ -80,6 +82,7 @@ from ..services.clarification import (
 from ..services.critic import ApprovedDrafts, CriticService, NeedsReview
 from ..services.events import record_event
 from ..services.extraction import ExtractionService, InjectionFinding
+from ..services.identity import IdentityService
 from ..services.ingestion import normalize_inbound_text
 from ..services.notifications import (
     NotificationService,
@@ -94,10 +97,11 @@ from .runner import JobClaim, PermanentJobError
 
 logger = logging.getLogger("resilinet.workers.handlers")
 
-MATCHING_KINDS = frozenset({ReportKind.NEED, ReportKind.SUPPLY})
-NOTICE_KINDS = frozenset(
-    {ReportKind.QUERY, ReportKind.STATUS_UPDATE, ReportKind.CANCEL, ReportKind.OTHER}
+MATCHING_KINDS = frozenset({ReportKind.NEED})
+ACTION_KINDS = frozenset(
+    {ReportKind.SUPPLY, ReportKind.STATUS_UPDATE, ReportKind.CANCEL}
 )
+NOTICE_KINDS = frozenset({ReportKind.QUERY, ReportKind.OTHER})
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +125,7 @@ class MessageJobHandler:
         extraction: ExtractionService,
         notifications: NotificationService,
         intelligence: IntelligenceProvider,
+        identity: IdentityService | None = None,
         public_base_url: str = "http://localhost:8000",
         clock: Callable[[], datetime] | None = None,
     ) -> None:
@@ -128,10 +133,16 @@ class MessageJobHandler:
         self._inbox = inbox
         self._extraction = extraction
         self._notifications = notifications
+        self._identity = identity
         self._clock = clock or utcnow
         self._allocations = AllocationService(clock=self._clock)
         self._critic = CriticService(intelligence)
         self._public_base_url = public_base_url.rstrip("/")
+        self._action_intake = ActionIntakeService(
+            notifications,
+            public_base_url=self._public_base_url,
+            clock=self._clock,
+        )
 
     async def __call__(self, claim: JobClaim) -> None:
         if claim.type is JobType.PROCESS_MESSAGE:
@@ -144,6 +155,10 @@ class MessageJobHandler:
     # -- process -----------------------------------------------------------
 
     async def _process(self, claim: JobClaim) -> None:
+        rematch = claim.payload.get("rematch_need_ids")
+        if isinstance(rematch, (list, tuple)) and rematch:
+            await self._process_rematch(claim, rematch)
+            return
         message_id = self._message_id(claim)
         snapshot = await self._load_message(message_id)
         if snapshot is None:
@@ -158,7 +173,74 @@ class MessageJobHandler:
         if message.status is not MessageStatus.QUEUED:
             # Already handled, throttled, deferred, or under review.
             return
+        try:
+            await self._process_queued(claim, message, sender)
+        finally:
+            # Verification is best-effort and runs after this message's work:
+            # a provider outage must never delay or fail mail processing.
+            await self._request_sender_verification(sender.id)
 
+    async def _process_rematch(
+        self, claim: JobClaim, rematch_need_ids: Sequence[object]
+    ) -> None:
+        """Re-run matching for residual needs after an authorized stock change.
+
+        The job carries an explicit need list computed under the action's
+        transaction, so a supply edit never becomes a global rematch.
+        """
+        message_id = self._message_id(claim)
+        async with self._session_factory() as session:
+            message = await session.get(Message, message_id)
+            if message is None:
+                raise PermanentJobError("rematch source message disappeared")
+            incident_id = message.incident_id
+        try:
+            need_ids = tuple(
+                UUID(str(value)) for value in rematch_need_ids
+            )
+        except (ValueError, TypeError) as exc:
+            raise PermanentJobError("rematch job carries an invalid need id") from exc
+        if not need_ids:
+            return
+        async with self._session_factory() as session:
+            valid = set(
+                await session.scalars(
+                    sa.select(Need.id).where(
+                        Need.id.in_(need_ids),
+                        Need.incident_id == incident_id,
+                    )
+                )
+            )
+        need_ids = tuple(need_id for need_id in need_ids if need_id in valid)
+        if not need_ids:
+            logger.warning(
+                "rematch_ids_outside_incident",
+                extra={"job_id": str(claim.id)},
+            )
+            return
+        await self._run_matching(
+            _MatchingWork(
+                reply_message_id=message_id,
+                incident_id=incident_id,
+                need_ids=(),
+                rematch_need_ids=need_ids,
+            )
+        )
+
+    async def _request_sender_verification(self, sender_id: UUID) -> None:
+        if self._identity is None:
+            return
+        try:
+            await self._identity.ensure_sender_verification(sender_id)
+        except Exception:
+            logger.exception(
+                "sender_verification_request_failed",
+                extra={"sender_id": str(sender_id)},
+            )
+
+    async def _process_queued(
+        self, claim: JobClaim, message: Message, sender: Sender
+    ) -> None:
         findings: list[InjectionFinding] = []
         try:
             parsed = await self._extraction.parse(
@@ -175,7 +257,7 @@ class MessageJobHandler:
         now = self._clock()
         matching: _MatchingWork | None = None
         async with self._session_factory() as session, session.begin():
-            current = await session.get(Message, message_id, with_for_update=True)
+            current = await session.get(Message, message.id, with_for_update=True)
             if current is None:
                 raise PermanentJobError("message no longer exists")
             if current.status is not MessageStatus.QUEUED:
@@ -236,11 +318,12 @@ class MessageJobHandler:
             await clarification.ask(message, decision, parsed)
             return None
 
-        if parsed.context.kind in MATCHING_KINDS:
+        sender = await session.get(Sender, message.sender_id)
+        if sender is None:  # pragma: no cover - FK guarantees the row
+            raise PermanentJobError("message sender disappeared")
+
+        if parsed.context.kind is ReportKind.NEED:
             persisted = await clarification.process_ready(message, parsed)
-            sender = await session.get(Sender, message.sender_id)
-            if sender is None:  # pragma: no cover - FK guarantees the row
-                raise PermanentJobError("message sender disappeared")
             result = await self._allocations.register_reports(
                 session,
                 message=message,
@@ -254,6 +337,33 @@ class MessageJobHandler:
             return await self._work_from_registration(
                 session, message, parsed, result
             )
+
+        if parsed.context.kind in ACTION_KINDS:
+            # Email text never mutates stock or state. Persist the validated
+            # payload and issue a private single-use link when the sender is
+            # authorized; otherwise keep the record and escalate review.
+            persisted = await clarification.process_ready(message, parsed)
+            outcome = await self._action_intake.record(
+                session,
+                message=message,
+                sender=sender,
+                parsed=parsed,
+                entity_id=persisted.entity_id,
+                report_ids=list(persisted.report_ids),
+            )
+            for case in outcome.review_cases:
+                await self._notify_operators(
+                    session,
+                    incident_id=message.incident_id,
+                    case_id=case.id,
+                    mailbox_id=message.mailbox_id,
+                )
+            return None
+
+        if parsed.context.kind is ReportKind.QUERY and await self._respond_to_status_query(
+            session, message, sender, parsed
+        ):
+            return None
 
         if parsed.context.kind not in NOTICE_KINDS:  # pragma: no cover - enum is closed
             raise PermanentJobError(f"unhandled report kind {parsed.context.kind.value}")
@@ -280,6 +390,192 @@ class MessageJobHandler:
             payload={"message_id": str(message.id), "kind": parsed.context.kind.value},
         )
         return None
+
+    async def _respond_to_status_query(
+        self,
+        session: AsyncSession,
+        message: Message,
+        sender: Sender,
+        parsed: ParsedEmail,
+    ) -> bool:
+        """Read-only ``QUERY STATUS RN-…`` / ``AL-…``; never mutates domain state."""
+        reference = (parsed.context.reference_id or "").strip().upper()
+        if not reference.startswith(("RN-", "AL-")):
+            return False
+        message.status = MessageStatus.PROCESSED
+        message.parsed_json = parsed.model_dump(mode="json")
+        message.processed_at = self._clock()
+
+        if reference.startswith("AL-"):
+            return await self._allocation_status_reply(
+                session, message, sender, reference
+            )
+
+        need = await session.scalar(
+            sa.select(Need).where(
+                Need.incident_id == message.incident_id, Need.ref == reference
+            )
+        )
+        if need is None:
+            await self._status_not_found(session, message, sender, reference)
+            return True
+        authorized = await self._may_read_status(session, message, sender, need)
+        if not authorized:
+            body = self._notifications.wrong_sender_text()
+            kind = f"status:{need.ref}:denied"
+        else:
+            allocations = await self._allocations.allocations_for_need(
+                session, need.id
+            )
+            reserved = sum(
+                (
+                    allocation.quantity - allocation.delivered_quantity
+                    for allocation in allocations
+                    if allocation.status in ACTIVE_ALLOCATION_STATUSES
+                ),
+                Decimal("0"),
+            )
+            delivered = sum(
+                (
+                    allocation.delivered_quantity
+                    for allocation in allocations
+                    if allocation.status is not AllocationStatus.REJECTED
+                ),
+                Decimal("0"),
+            )
+            estimated = need.quantity_source is QuantitySource.ESTIMATED
+            body = self._notifications.status_text(
+                need_ref=need.ref,
+                resource_label=need.resource.value.replace("_", " "),
+                status_label=need.status.value.replace("_", " "),
+                required_label=_quantity_label(need.quantity, need.unit, estimated),
+                reserved_label=_quantity_label(reserved, need.unit, estimated),
+                delivered_label=_quantity_label(delivered, need.unit, estimated),
+                allocation_refs=[allocation.ref for allocation in allocations],
+            )
+            kind = f"status:{need.ref}"
+        await self._enqueue_guarded(
+            session, message=message, sender=sender, kind=kind, body=body
+        )
+        await record_event(
+            session,
+            incident_id=message.incident_id,
+            event_type="need.status_queried",
+            aggregate_type="need",
+            aggregate_id=need.id,
+            payload={
+                "need_ref": need.ref,
+                "found": True,
+                "authorized": authorized,
+            },
+        )
+        return True
+
+    async def _allocation_status_reply(
+        self,
+        session: AsyncSession,
+        message: Message,
+        sender: Sender,
+        reference: str,
+    ) -> bool:
+        allocation = await session.scalar(
+            sa.select(Allocation).where(
+                Allocation.incident_id == message.incident_id,
+                Allocation.ref == reference,
+            )
+        )
+        if allocation is None:
+            await self._status_not_found(session, message, sender, reference)
+            return True
+        need = await session.get(Need, allocation.need_id)
+        if need is None:  # pragma: no cover - FK guarantees the row
+            await self._status_not_found(session, message, sender, reference)
+            return True
+        authorized = await self._may_read_status(session, message, sender, need)
+        if not authorized:
+            body = self._notifications.wrong_sender_text()
+            kind = f"status:{allocation.ref}:denied"
+        else:
+            body = self._notifications.allocation_status_text(
+                allocation_ref=allocation.ref,
+                need_ref=need.ref,
+                status_label=allocation.status.value.replace("_", " "),
+                resource_label=allocation.resource.value.replace("_", " "),
+                quantity_label=amount_label(allocation.quantity, allocation.unit),
+                delivered_label=amount_label(
+                    allocation.delivered_quantity, allocation.unit
+                ),
+            )
+            kind = f"status:{allocation.ref}"
+        await self._enqueue_guarded(
+            session, message=message, sender=sender, kind=kind, body=body
+        )
+        await record_event(
+            session,
+            incident_id=message.incident_id,
+            event_type="allocation.status_queried",
+            aggregate_type="allocation",
+            aggregate_id=allocation.id,
+            payload={
+                "allocation_ref": allocation.ref,
+                "authorized": authorized,
+            },
+        )
+        return True
+
+    async def _status_not_found(
+        self,
+        session: AsyncSession,
+        message: Message,
+        sender: Sender,
+        reference: str,
+    ) -> None:
+        await self._enqueue_guarded(
+            session,
+            message=message,
+            sender=sender,
+            kind=f"status:{reference}:missing",
+            body=self._notifications.reference_not_found_text(),
+        )
+        await record_event(
+            session,
+            incident_id=message.incident_id,
+            event_type="need.status_queried",
+            aggregate_type="message",
+            aggregate_id=message.id,
+            payload={"need_ref": reference, "found": False, "authorized": False},
+        )
+
+    async def _may_read_status(
+        self,
+        session: AsyncSession,
+        message: Message,
+        sender: Sender,
+        need: Need,
+    ) -> bool:
+        if need.source_report_id is not None:
+            report = await session.get(Report, need.source_report_id)
+            if report is not None and report.sender_id == sender.id:
+                return True
+        entity_role = await session.scalar(
+            sa.select(ParticipantRole.id).where(
+                ParticipantRole.incident_id == message.incident_id,
+                ParticipantRole.sender_id == sender.id,
+                ParticipantRole.role == ParticipantRoleKind.ENTITY_COORDINATOR,
+                ParticipantRole.entity_id == need.entity_id,
+            )
+        )
+        if entity_role is not None:
+            return True
+        operator_role = await session.scalar(
+            sa.select(ParticipantRole.id).where(
+                ParticipantRole.incident_id == message.incident_id,
+                ParticipantRole.sender_id == sender.id,
+                ParticipantRole.role == ParticipantRoleKind.OPERATOR,
+                ParticipantRole.entity_id.is_(None),
+            )
+        )
+        return operator_role is not None
 
     async def _handle_correction(
         self,
@@ -451,7 +747,7 @@ class MessageJobHandler:
                     message=message,
                     sender=sender,
                     kind=f"medical_notice:{need.ref}",
-                    body=self._notifications.medical_review_text(),
+                    body=self._notifications.medical_corroboration_text(),
                 )
                 continue
             entity = await session.get(Entity, need.entity_id)
@@ -509,21 +805,17 @@ class MessageJobHandler:
     async def _recovery_work(self, message: Message) -> _MatchingWork | None:
         """Rebuild unfinished matching for an already-processed message."""
         async with self._session_factory() as session:
-            completed = list(
-                await session.scalars(
-                    sa.select(EventLog)
-                    .where(
-                        EventLog.incident_id == message.incident_id,
-                        EventLog.event_type == "matching.completed",
-                    )
-                    .order_by(EventLog.created_at.desc())
-                    .limit(500)
+            completed = await session.scalar(
+                sa.select(EventLog.id)
+                .where(
+                    EventLog.incident_id == message.incident_id,
+                    EventLog.event_type == "matching.completed",
+                    EventLog.aggregate_type == "message",
+                    EventLog.aggregate_id == message.id,
                 )
+                .limit(1)
             )
-            if any(
-                event.payload.get("message_id") == str(message.id)
-                for event in completed
-            ):
+            if completed is not None:
                 return None
             report_message_ids = [message.id]
             if message.reply_to_message_id is not None:
@@ -587,9 +879,13 @@ class MessageJobHandler:
         async with self._session_factory() as session:
             for need_id in ordered:
                 need = await session.get(Need, need_id)
-                if need is None or need.needs_human_review:
+                if (
+                    need is None
+                    or need.incident_id != work.incident_id
+                    or need.needs_human_review
+                ):
                     continue
-                if need.status is NeedStatus.CANCELLED:
+                if need.status in (NeedStatus.CANCELLED, NeedStatus.FULFILLED):
                     continue
                 drafts = await self._allocations.drafts_for_need(session, need_id, now)
                 if not drafts:
@@ -617,7 +913,11 @@ class MessageJobHandler:
                 if need_id not in plans:
                     continue
                 need = await session.get(Need, need_id)
-                if need is None or need.status is NeedStatus.CANCELLED:
+                if (
+                    need is None
+                    or need.incident_id != work.incident_id
+                    or need.status in (NeedStatus.CANCELLED, NeedStatus.FULFILLED)
+                ):
                     continue
                 plan = plans[need_id]
                 source_message, source_sender = await self._need_contacts(
@@ -807,6 +1107,9 @@ class MessageJobHandler:
         supply = await session.get(Supply, allocation.supply_id)
         if supply is None:  # pragma: no cover - FK guarantees the row
             return
+        # The TTL starts at issue time. `now` was captured before the critic
+        # LLM call and may be stale by the time this transaction runs.
+        now = self._clock()
         coordinator = await session.scalar(
             sa.select(Sender)
             .join(ParticipantRole, ParticipantRole.sender_id == Sender.id)
@@ -838,12 +1141,40 @@ class MessageJobHandler:
             sa.select(ActionGrant).where(
                 ActionGrant.allocation_id == allocation.id,
                 ActionGrant.kind == PendingActionKind.CONFIRM_ALLOCATION,
+                ActionGrant.sender_id == coordinator.id,
                 ActionGrant.consumed_at.is_(None),
                 ActionGrant.expires_at > now,
             )
         )
         if existing is not None:
-            return  # a live grant was already issued for this allocation
+            queued = await session.scalar(
+                sa.select(OutboundEmail.id).where(
+                    OutboundEmail.kind == f"confirm_request:{allocation.ref}",
+                    OutboundEmail.to_address == coordinator.address,
+                    OutboundEmail.status != OutboundStatus.FAILED,
+                )
+            )
+            if queued is not None:
+                return  # a live grant and its private email already exist
+            # The email never committed: invalidate the unreceived token.
+            existing.consumed_at = now
+            existing.updated_at = now
+        # A coordinator change must not leave the new coordinator without a
+        # link. Invalidate any live grant held by a different sender first.
+        other_live = list(
+            await session.scalars(
+                sa.select(ActionGrant).where(
+                    ActionGrant.allocation_id == allocation.id,
+                    ActionGrant.kind == PendingActionKind.CONFIRM_ALLOCATION,
+                    ActionGrant.sender_id != coordinator.id,
+                    ActionGrant.consumed_at.is_(None),
+                    ActionGrant.expires_at > now,
+                )
+            )
+        )
+        for stale in other_live:
+            stale.consumed_at = now
+            stale.updated_at = now
         # The 30-minute TTL starts when the grant is issued (after any LLM
         # critique), not when matching began; an expired grant is reissued.
         _grant, token = await create_action_grant(
@@ -854,7 +1185,7 @@ class MessageJobHandler:
             entity_id=supply.entity_id,
             need_id=need.id,
             allocation_id=allocation.id,
-            now=self._clock(),
+            now=now,
         )
         supply_entity = await session.get(Entity, supply.entity_id)
         need_entity = await session.get(Entity, need.entity_id)
@@ -918,6 +1249,7 @@ class MessageJobHandler:
                 sa.select(OutboundEmail.id).where(
                     OutboundEmail.kind == kind,
                     OutboundEmail.to_address == operator.address,
+                    OutboundEmail.status != OutboundStatus.FAILED,
                 )
             )
             if queued is not None:
@@ -951,6 +1283,7 @@ class MessageJobHandler:
             sa.select(OutboundEmail.id).where(
                 OutboundEmail.message_id == message.id,
                 OutboundEmail.kind == kind,
+                OutboundEmail.status != OutboundStatus.FAILED,
             )
         )
         if queued is not None:

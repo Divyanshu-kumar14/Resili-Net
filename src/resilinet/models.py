@@ -525,7 +525,16 @@ class AuthSession(UUIDPrimaryKey, Timestamped, Base):
 
 class VerificationRequest(UUIDPrimaryKey, Timestamped, Base):
     __tablename__ = "verification_requests"
-    __table_args__ = (sa.Index("ix_verification_sender_status", "sender_id", "status"),)
+    __table_args__ = (
+        sa.Index("ix_verification_sender_status", "sender_id", "status"),
+        sa.Index(
+            "uq_verification_pending_sender",
+            "sender_id",
+            unique=True,
+            sqlite_where=sa.text("status = 'pending'"),
+            postgresql_where=sa.text("status = 'pending'"),
+        ),
+    )
 
     incident_id: Mapped[UUID] = mapped_column(
         sa.ForeignKey("incidents.id", ondelete="CASCADE"), index=True
@@ -535,6 +544,7 @@ class VerificationRequest(UUIDPrimaryKey, Timestamped, Base):
     )
     provider_state_id: Mapped[str | None] = mapped_column(sa.String(200), nullable=True)
     redirect_url: Mapped[str | None] = mapped_column(sa.String(500), nullable=True)
+    send_claimed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     status: Mapped[VerificationStatus] = mapped_column(
         enum_column(VerificationStatus, "verification_status"),
         default=VerificationStatus.PENDING,

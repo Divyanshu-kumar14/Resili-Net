@@ -732,6 +732,8 @@ class AllocationService:
         history and unaffected allocations are never altered.
         """
         now = self._clock()
+        if quantity < 0:
+            raise AvailabilityError("on-hand stock cannot be negative")
         supply = await session.scalar(
             sa.select(Supply)
             .where(
@@ -756,9 +758,15 @@ class AllocationService:
             session.add(supply)
         else:
             if supply.unit != unit:
-                reserved = reserved_remaining(
-                    _quantities(await self.allocations_for_supply(session, supply.id))
+                existing_rows = await self.allocations_for_supply(
+                    session, supply.id
                 )
+                if any(row.delivered_quantity > 0 for row in existing_rows):
+                    raise AvailabilityError(
+                        "snapshot unit cannot change after deliveries in the "
+                        "old unit"
+                    )
+                reserved = reserved_remaining(_quantities(existing_rows))
                 if reserved > 0:
                     raise AvailabilityError(
                         f"snapshot unit {unit!r} cannot replace {supply.unit!r} "
@@ -827,12 +835,17 @@ class AllocationService:
         rows = await self.allocations_for_need(session, need.id)
         quantities = _quantities(rows)
         delivered = delivered_total(quantities)
-        if new_quantity < delivered:
+        revised = new_quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+        if revised <= 0:
             raise AvailabilityError(
-                f"need quantity {new_quantity} is below delivered total {delivered}"
+                "need quantity must be at least 0.001 in canonical resolution"
+            )
+        if revised < delivered:
+            raise AvailabilityError(
+                f"need quantity {revised} is below delivered total {delivered}"
             )
         old_quantity = need.quantity
-        need.quantity = new_quantity.quantize(_QUANTUM, rounding=ROUND_DOWN)
+        need.quantity = revised
         need.updated_at = self._clock()
         await session.flush()
 

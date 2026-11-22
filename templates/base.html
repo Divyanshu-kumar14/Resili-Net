@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>{% block title %}ResiliNet{% endblock %}</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; }
+    main { max-width: 46rem; margin: 0 auto; padding: 1.5rem; }
+    header { border-bottom: 1px solid #767676; margin-bottom: 1.5rem; }
+    nav { padding: 0.75rem 0; }
+    nav a { margin-right: 1rem; }
+    h1 { font-size: 1.6rem; margin: 0.5rem 0 1rem; }
+    h2 { font-size: 1.2rem; margin-top: 1.75rem; }
+    label { display: block; font-weight: 600; margin: 0.75rem 0 0.25rem; }
+    input, button { font: inherit; padding: 0.5rem; }
+    input[type="email"], input[type="text"], input[type="number"] { width: 100%; max-width: 30rem; }
+    button { margin-top: 0.75rem; cursor: pointer; }
+    .error { border-left: 0.35rem solid #b00020; padding: 0.5rem 0.75rem; margin: 1rem 0; }
+    .muted { color: #5a5a5a; }
+    .card { border: 1px solid #767676; border-radius: 0.35rem; padding: 1rem; margin: 1rem 0; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
+    dt { font-weight: 600; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border-bottom: 1px solid #767676; padding: 0.4rem; text-align: left; vertical-align: top; }
+    :focus-visible { outline: 0.2rem solid #005fcc; outline-offset: 0.15rem; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+  </style>
+</head>
+<body>
+  <header>
+    <main>
+      <nav aria-label="Primary">
+        <a href="/">ResiliNet</a>
+        <a href="/operator/reviews">Review queue</a>
+      </nav>
+    </main>
+  </header>
+  <main id="main">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

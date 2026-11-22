@@ -632,3 +632,73 @@ async def test_lifecycle_events_are_recorded_without_pii(
         assert "allocation.proposed" in event_types
         assert "allocation.confirmed" in event_types
         assert "allocation.delivered" in event_types
+
+
+async def test_snapshot_unit_change_after_delivery_is_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    svc = service(clock)
+    async with transaction(session_factory) as session:
+        shelter = await add_entity(session, incident_id, "Shelter 4", EntityType.SHELTER)
+        depot = await add_entity(session, incident_id, "Depot B", EntityType.DEPOT)
+        need = await make_need(session, svc, incident_id, shelter, "100")
+        supply = await make_supply(session, svc, incident_id, depot, "100")
+        (allocation,) = await propose(session, svc, need, clock)
+        await svc.confirm_allocation(session, allocation_id=allocation.id)
+        await svc.record_delivery(
+            session, allocation_id=allocation.id, quantity=Decimal("30")
+        )
+
+        with pytest.raises(AvailabilityError, match="after deliveries"):
+            await svc.apply_supply_snapshot(
+                session,
+                incident_id=incident_id,
+                entity_id=depot.id,
+                resource=Resource.POTABLE_WATER,
+                quantity=Decimal("100"),
+                unit="count",
+                source_report_id=None,
+            )
+        assert supply.unit == "l"
+
+
+async def test_negative_supply_snapshot_is_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    svc = service(clock)
+    async with transaction(session_factory) as session:
+        depot = await add_entity(session, incident_id, "Depot B", EntityType.DEPOT)
+        await make_supply(session, svc, incident_id, depot, "100")
+        with pytest.raises(AvailabilityError, match="cannot be negative"):
+            await svc.apply_supply_snapshot(
+                session,
+                incident_id=incident_id,
+                entity_id=depot.id,
+                resource=Resource.POTABLE_WATER,
+                quantity=Decimal("-1"),
+                unit="l",
+                source_report_id=None,
+            )
+        supply = await session.scalar(sa.select(Supply))
+        assert supply is not None and supply.on_hand == Decimal("100.000")
+
+
+async def test_need_revision_that_quantizes_to_zero_is_rejected(
+    session_factory: async_sessionmaker[AsyncSession],
+    incident_id: UUID,
+    clock: Clock,
+) -> None:
+    svc = service(clock)
+    async with transaction(session_factory) as session:
+        shelter = await add_entity(session, incident_id, "Shelter 4", EntityType.SHELTER)
+        need = await make_need(session, svc, incident_id, shelter, "100")
+        with pytest.raises(AvailabilityError, match=r"at least 0\.001"):
+            await svc.update_need(
+                session, need_id=need.id, new_quantity=Decimal("0.0004")
+            )
+        current = await session.get(Need, need.id)
+        assert current is not None and current.quantity == Decimal("100.000")

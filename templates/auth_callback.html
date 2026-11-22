@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Continue signing in · ResiliNet{% endblock %}
+{% block content %}
+<h1>Continue signing in</h1>
+<p>This link has not been used yet. Submit the button below to finish signing
+in. Opening this page did not verify you or create a session.</p>
+<form method="post" action="/auth/callback">
+  <input type="hidden" name="state_id" value="{{ state_id }}">
+  <input type="hidden" name="nonce" value="{{ nonce }}">
+  <button type="submit">Continue</button>
+</form>
+<p class="muted">If you did not request this sign-in, close this page and tell
+an operator.</p>
+{% endblock %}

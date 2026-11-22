@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Sign in · ResiliNet{% endblock %}
+{% block content %}
+<h1>Sign in</h1>
+<p>Enter the address registered with this incident. We will send a single-use
+verification link through MojoAuth. Signing in proves control of that address;
+it does not grant depot or operator authority.</p>
+{% if error %}
+<p class="error" role="alert">{{ error }}</p>
+{% endif %}
+<form method="post" action="/operator/login">
+  <label for="email">Email address</label>
+  <input id="email" name="email" type="email" autocomplete="email" required
+         inputmode="email" spellcheck="false">
+  <button type="submit">Send verification link</button>
+</form>
+<p class="muted">If the address is known, a verification message will arrive
+shortly. The response is the same for unknown addresses.</p>
+{% endblock %}

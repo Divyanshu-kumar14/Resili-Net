@@ -19,12 +19,13 @@ AppEnv = Literal["test", "replay", "live"]
 IntelligenceProviderName = Literal["openai", "nvidia"]
 
 #: Settings that must carry a value before the service may run in live mode,
-#: regardless of which intelligence provider is selected. MojoAuth is not here
-#: yet: no identity adapter or action page consumes it until Phase 3, so
-#: requiring it would block the email-to-reply path without adding safety.
+#: regardless of which intelligence provider is selected. MojoAuth is required
+#: from Phase 3 on: participant action links and operator review pages depend on
+#: verified identities, so a live deployment without it would be unsafe.
 LIVE_REQUIRED_SECRETS: tuple[str, ...] = (
     "agentboxd_api_key",
     "agentboxd_webhook_secret",
+    "mojoauth_api_key",
 )
 
 #: The provider-specific secret required in live mode.
@@ -79,13 +80,20 @@ class Settings(BaseSettings):
     nvidia_api_key: SecretStr | None = None
 
     request_timeout_seconds: float = Field(default=20.0, gt=0, le=120)
+    session_ttl_minutes: int = Field(default=480, gt=0, le=10_080)
+    verification_ttl_minutes: int = Field(default=30, gt=0, le=1_440)
+    operator_login_window_minutes: int = Field(default=5, gt=0, le=1_440)
+    operator_login_max_requests: int = Field(default=3, gt=0, le=100)
+    operator_login_global_max_requests: int = Field(default=20, gt=0, le=10_000)
 
     @model_validator(mode="after")
     def _require_live_secrets(self) -> Self:
         # Live mode fails fast for the providers the running path uses. The
         # intelligence provider is selectable, so only its own key is
-        # mandatory; MojoAuth remains optional until the identity adapter and
-        # action pages land in Phase 3.
+        # mandatory.
+        # MojoAuth is mandatory from Phase 3 on: without it, participants and
+        # operators could not establish verified sessions, so action links
+        # must never be served.
         if self.app_env != "live":
             return self
         required = (*LIVE_REQUIRED_SECRETS, PROVIDER_SECRETS[self.llm_provider])

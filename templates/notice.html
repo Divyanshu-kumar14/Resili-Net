@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}{{ title }} · ResiliNet{% endblock %}
+{% block content %}
+<h1>{{ title }}</h1>
+<p role="status">{{ message }}</p>
+{% if back_url %}
+<p><a href="{{ back_url }}">Continue</a></p>
+{% endif %}
+{% endblock %}
