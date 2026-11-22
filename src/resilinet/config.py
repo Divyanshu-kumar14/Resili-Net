@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     operator_login_global_max_requests: int = Field(default=20, gt=0, le=10_000)
 
     @model_validator(mode="after")
+    def _reject_wildcard_momen_origin(self) -> Self:
+        # A wildcard would expose the public projection to every origin; the
+        # allow-list only has meaning when every entry is an exact origin.
+        if any(origin.strip() == "*" for origin in self.momen_origins):
+            raise ValueError("momen_origins must list exact origins, not '*'")
+        return self
+
+    @model_validator(mode="after")
     def _require_live_secrets(self) -> Self:
         # Live mode fails fast for the providers the running path uses. The
         # intelligence provider is selectable, so only its own key is

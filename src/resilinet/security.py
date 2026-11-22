@@ -150,6 +150,25 @@ def private_headers() -> dict[str, str]:
     }
 
 
+def public_headers() -> dict[str, str]:
+    """Headers for the read-only public mirror.
+
+    Scripts are same-origin only and never inline. Styles allow the inline
+    ``<style>`` block inherited from the shared base template in addition to
+    the local stylesheet. No external origin is allowed for any resource.
+    """
+    return {
+        "Cache-Control": "no-cache",
+        "Referrer-Policy": "no-referrer",
+        "X-Content-Type-Options": "nosniff",
+        "Content-Security-Policy": (
+            "default-src 'none'; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; img-src 'self' data:; connect-src 'self'; "
+            "form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+        ),
+    }
+
+
 __all__ = [
     "AUTH_NONCE_COOKIE",
     "SESSION_COOKIE_NAME",
@@ -164,6 +183,7 @@ __all__ = [
     "new_opaque_token",
     "normalize_email",
     "private_headers",
+    "public_headers",
     "session_cookie_header",
     "session_cookie_secure",
 ]

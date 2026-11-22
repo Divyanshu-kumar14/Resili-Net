@@ -8,9 +8,12 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from .api.routes import router
@@ -25,10 +28,13 @@ from .observability import (
 from .ports import AuthProvider, InboxProvider
 from .security import private_headers
 from .web.actions import router as actions_router
+from .web.replay import router as replay_router
 from .web.reviews import router as reviews_router
 from .workers.runtime import RETRY_RUNTIME_SECONDS, run_worker
 
 logger = logging.getLogger("resilinet.main")
+
+_STATIC_DIR = Path(__file__).resolve().parents[2] / "static"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +145,18 @@ def create_app(
     app.state.settings = resolved
     app.state.container = container if container is not None else build_container(resolved)
     app.add_middleware(TraceIdMiddleware)
+    if resolved.momen_origins:
+        # Public read-only JSON: configured origins only, GET only, no
+        # credentials. If-None-Match must be preflight-allowed and the ETag
+        # exposed, or a browser client cannot use conditional requests.
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(resolved.momen_origins),
+            allow_credentials=False,
+            allow_methods=["GET"],
+            allow_headers=["If-None-Match"],
+            expose_headers=["ETag"],
+        )
 
     @app.middleware("http")
     async def private_page_headers(request: Any, call_next: Any) -> Any:
@@ -151,6 +169,8 @@ def create_app(
     app.include_router(router)
     app.include_router(actions_router)
     app.include_router(reviews_router)
+    app.include_router(replay_router)
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
     logger.info("application_started", extra={"mode": resolved.app_env})
     return app
 

@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Lite — {{ incident_name }} relief resources{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/app.css">{% endblock %}
+{% block nav %}
+<a href="/">ResiliNet</a>
+<a href="/replay">Map view</a>
+{% endblock %}
+{% block content %}
+<p class="banner" role="note">
+  <strong>Recorded replay</strong> — not live service activity. This text view uses no
+  JavaScript and no map tiles.
+</p>
+{% if simulation %}
+<p class="banner" role="note">
+  <strong>Simulation exercise</strong> — the entities and quantities in this
+  incident are fictional demonstration data.
+</p>
+{% endif %}
+
+<h1>{{ incident_name }} — low-bandwidth resource list</h1>
+
+<p id="freshness" data-generated-at="{{ generated_at }}">
+  Updated {{ freshness_seconds }} s ago. Snapshot generated {{ generated_at }}.
+</p>
+
+<form method="get" action="/replay/lite" class="filters" aria-label="Filter relief resources">
+  <input type="hidden" name="incident_id" value="{{ incident_id }}">
+  <div class="filter-field">
+    <label for="resource">Resource</label>
+    <select id="resource" name="resource">
+      <option value="">All resources</option>
+      {% for option in options.resource %}
+      <option value="{{ option.value }}"{% if filters.resource == option.value %} selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="urgency">Urgency</label>
+    <select id="urgency" name="urgency">
+      <option value="">All urgency levels</option>
+      {% for option in options.urgency %}
+      <option value="{{ option.value }}"{% if filters.urgency == option.value %} selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label for="status">Need status</label>
+    <select id="status" name="status">
+      <option value="">All statuses</option>
+      {% for option in options.status %}
+      <option value="{{ option.value }}"{% if filters.status == option.value %} selected{% endif %}>{{ option.label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-actions">
+    <button type="submit">Apply filters</button>
+    <a href="/replay/lite?incident_id={{ incident_id }}">Clear filters</a>
+  </div>
+</form>
+
+<h2>Needs</h2>
+<table>
+  <caption>Needs reported for this incident. Quantities are stated or estimated.</caption>
+  <thead>
+    <tr>
+      <th scope="col">Entity</th>
+      <th scope="col">Resource</th>
+      <th scope="col">Quantity</th>
+      <th scope="col">Basis</th>
+      <th scope="col">Urgency</th>
+      <th scope="col">Status</th>
+      <th scope="col">Flags</th>
+      <th scope="col">Reference</th>
+      <th scope="col">Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for need in needs %}
+    <tr>
+      <td>{{ need.entity_name }}</td>
+      <td>{{ need.resource | replace("_", " ") }}</td>
+      <td>{{ need.quantity }} {{ need.unit }}</td>
+      <td data-basis="{{ need.basis }}">{{ need.basis_label }}</td>
+      <td>{{ need.urgency }}</td>
+      <td>{{ need.status }}</td>
+      <td>{{ need.flags | join(", ") if need.flags else "—" }}</td>
+      <td>{{ need.ref }}</td>
+      <td>{{ need.updated_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Supplies</h2>
+<table>
+  <caption>Reported on-hand stock and the derived available quantity after active reservations.</caption>
+  <thead>
+    <tr>
+      <th scope="col">Entity</th>
+      <th scope="col">Resource</th>
+      <th scope="col">On hand</th>
+      <th scope="col">Available</th>
+      <th scope="col">Unit</th>
+      <th scope="col">Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for supply in supplies %}
+    <tr>
+      <td>{{ supply.entity_name }}</td>
+      <td>{{ supply.resource | replace("_", " ") }}</td>
+      <td>{{ supply.on_hand }}</td>
+      <td>{{ supply.available }}</td>
+      <td>{{ supply.unit }}</td>
+      <td>{{ supply.updated_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Allocations</h2>
+<table>
+  <caption>Proposed, confirmed, delivered, and cancelled allocations. A proposal is not a dispatch.</caption>
+  <thead>
+    <tr>
+      <th scope="col">Reference</th>
+      <th scope="col">Need</th>
+      <th scope="col">Entity</th>
+      <th scope="col">Quantity</th>
+      <th scope="col">Approx. distance (km)</th>
+      <th scope="col">Status</th>
+      <th scope="col">Updated</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for allocation in allocations %}
+    <tr>
+      <td>{{ allocation.ref }}</td>
+      <td>{{ allocation.need_ref }}</td>
+      <td>{{ allocation.entity_name }}</td>
+      <td>{{ allocation.quantity }} {{ allocation.unit }}</td>
+      <td>{{ allocation.distance_km }}</td>
+      <td>{{ allocation.status }}</td>
+      <td>{{ allocation.updated_at }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<p><a href="/replay">Back to the map view</a></p>
+{% endblock %}

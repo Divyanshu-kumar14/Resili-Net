@@ -809,6 +809,10 @@ async def test_rematch_job_cannot_touch_another_incidents_need(
                 },
                 status=JobStatus.PENDING,
                 dedupe_key="foreign-rematch-test",
+                # The column default is real utcnow(); the harness clock is
+                # frozen at NOW, so the job must be made due explicitly, as
+                # every other direct-Job test does.
+                available_at=NOW,
             )
         )
 

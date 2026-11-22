@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, cast
+from uuid import UUID
 
 import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ..models import Incident
 from ..ports import AdapterError, IgnoredWebhookEvent, WebhookVerificationError
@@ -24,7 +25,20 @@ from ..security import (
 )
 from ..services.identity import IdentityService
 from ..services.ingestion import IngestionService
-from ..web.common import current_principal, identity_service, templates
+from ..services.public import (
+    IncidentNotFound,
+    InvalidPublicFilter,
+    NotModified,
+    PublicFilters,
+    PublicProjectionError,
+    PublicSnapshot,
+)
+from ..web.common import (
+    current_principal,
+    identity_service,
+    public_service,
+    templates,
+)
 
 if TYPE_CHECKING:
     from ..main import Container
@@ -38,6 +52,93 @@ router = APIRouter()
 async def health() -> dict[str, str]:
     """Liveness only: process is up and serving requests."""
     return {"status": "ok"}
+
+
+def _public_snapshot_response(snapshot: PublicSnapshot | NotModified) -> Response:
+    headers = {
+        "ETag": snapshot.etag,
+        "Cache-Control": "no-cache",
+        "X-Content-Type-Options": "nosniff",
+    }
+    if isinstance(snapshot, NotModified):
+        return Response(status_code=304, headers=headers)
+    return JSONResponse(content=snapshot.body, headers=headers)
+
+
+@router.get("/api/v1/incidents/{incident_id}/map", tags=["public"])
+async def incident_map(
+    request: Request,
+    incident_id: UUID,
+    resource: str | None = None,
+    urgency: str | None = None,
+    status: str | None = None,
+) -> Response:
+    """Public map snapshot with resource, urgency, and need-status filters."""
+    service = public_service(request)
+    try:
+        filters = PublicFilters.parse(
+            resource=resource, urgency=urgency, status=status
+        )
+        snapshot = await service.map(
+            incident_id, filters, request.headers.get("if-none-match")
+        )
+    except InvalidPublicFilter as exc:
+        raise HTTPException(status_code=400, detail="invalid filter") from exc
+    except IncidentNotFound as exc:
+        raise HTTPException(status_code=404, detail="incident not found") from exc
+    except PublicProjectionError as exc:
+        logger.error("public_projection_invariant_violation")
+        raise HTTPException(
+            status_code=500, detail="public projection unavailable"
+        ) from exc
+    return _public_snapshot_response(snapshot)
+
+
+@router.get("/api/v1/incidents/{incident_id}/needs", tags=["public"])
+async def incident_needs(
+    request: Request,
+    incident_id: UUID,
+    resource: str | None = None,
+    urgency: str | None = None,
+    status: str | None = None,
+) -> Response:
+    """Bounded public need list; identical rows to the map projection."""
+    service = public_service(request)
+    try:
+        filters = PublicFilters.parse(
+            resource=resource, urgency=urgency, status=status
+        )
+        snapshot = await service.needs(
+            incident_id, filters, request.headers.get("if-none-match")
+        )
+    except InvalidPublicFilter as exc:
+        raise HTTPException(status_code=400, detail="invalid filter") from exc
+    except IncidentNotFound as exc:
+        raise HTTPException(status_code=404, detail="incident not found") from exc
+    except PublicProjectionError as exc:
+        logger.error("public_projection_invariant_violation")
+        raise HTTPException(
+            status_code=500, detail="public projection unavailable"
+        ) from exc
+    return _public_snapshot_response(snapshot)
+
+
+@router.get("/api/v1/incidents/{incident_id}/summary", tags=["public"])
+async def incident_summary(request: Request, incident_id: UUID) -> Response:
+    """Public counts and requested/delivered/reserved/unfulfilled totals."""
+    service = public_service(request)
+    try:
+        snapshot = await service.summary(
+            incident_id, request.headers.get("if-none-match")
+        )
+    except IncidentNotFound as exc:
+        raise HTTPException(status_code=404, detail="incident not found") from exc
+    except PublicProjectionError as exc:
+        logger.error("public_projection_invariant_violation")
+        raise HTTPException(
+            status_code=500, detail="public projection unavailable"
+        ) from exc
+    return _public_snapshot_response(snapshot)
 
 
 @router.post(

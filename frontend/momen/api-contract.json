@@ -1,0 +1,159 @@
+{
+  "version": 1,
+  "description": "Read-only public binding for the Momen map/list application. The page receives no API secret, session, action token, or provider payload.",
+  "base_url_setting": "PUBLIC_BASE_URL",
+  "endpoints": {
+    "map": {
+      "method": "GET",
+      "path": "/api/v1/incidents/{incident_id}/map"
+    },
+    "needs": {
+      "method": "GET",
+      "path": "/api/v1/incidents/{incident_id}/needs"
+    },
+    "summary": {
+      "method": "GET",
+      "path": "/api/v1/incidents/{incident_id}/summary"
+    }
+  },
+  "path_parameters": ["incident_id"],
+  "filters": ["resource", "urgency", "status"],
+  "top_level_fields": [
+    "incident_id",
+    "entities",
+    "needs",
+    "supplies",
+    "allocations",
+    "generated_at",
+    "truncated"
+  ],
+  "truncated": {
+    "note": "Per-collection booleans. True means that collection hit the public row cap (500) and the list is partial; summary counts/totals are exact aggregates and are never truncated."
+  },
+  "filter_semantics": {
+    "resource": "narrows needs, supplies, and allocations",
+    "urgency": "need attribute; narrows needs and their allocations only",
+    "status": "need attribute; narrows needs and their allocations only"
+  },
+  "collections": {
+    "entities": {
+      "fields": ["id", "name", "type", "lat", "lon", "geo_confidence"],
+      "marker_source": true
+    },
+    "needs": {
+      "fields": [
+        "id",
+        "ref",
+        "entity_id",
+        "resource",
+        "quantity",
+        "unit",
+        "quantity_source",
+        "headcount",
+        "urgency",
+        "status",
+        "verified",
+        "needs_human_review",
+        "created_at",
+        "updated_at"
+      ],
+      "marker_source": false
+    },
+    "supplies": {
+      "fields": [
+        "id",
+        "entity_id",
+        "resource",
+        "on_hand",
+        "available",
+        "unit",
+        "updated_at"
+      ],
+      "marker_source": false
+    },
+    "allocations": {
+      "fields": [
+        "ref",
+        "need_ref",
+        "need_id",
+        "supply_id",
+        "resource",
+        "quantity",
+        "unit",
+        "distance_km",
+        "status",
+        "updated_at"
+      ],
+      "marker_source": false
+    }
+  },
+  "markers": {
+    "one_per_entity": true,
+    "shapes": {
+      "shelter": "circle",
+      "depot": "rect",
+      "hub": "diamond",
+      "other": "triangle"
+    },
+    "label_field": "name",
+    "color_is_not_the_only_cue": true,
+    "no_coordinate_entities": "remain in the list and tables with null coordinates"
+  },
+  "forbidden_fields": [
+    "token",
+    "session",
+    "sender",
+    "email",
+    "address",
+    "provider_message_id",
+    "raw_text",
+    "body_text",
+    "action_url"
+  ],
+  "refresh": {
+    "mode": "scheduled_job",
+    "target_interval_ms": 1000,
+    "fallback_interval_ms": 5000,
+    "target_reply_to_map_ms": 5000,
+    "verified": false,
+    "verified_interval_ms": null,
+    "gate_status": "unresolved_account_gate",
+    "note": "The Momen editor spike is blocked. A 5000 ms poll is not a verified pass of the 5000 ms reply-to-map target; record measured p50/p95 before claiming it."
+  },
+  "lite": {
+    "path": "/lite",
+    "owner": "Momen",
+    "local_mirror_path": "/replay/lite",
+    "max_bytes": 100000,
+    "javascript": false,
+    "map_tiles": false
+  },
+  "privacy": {
+    "credentials": false,
+    "cors": "configured Momen origins only, GET only",
+    "pii": "no sender addresses, tokens, sessions, raw messages, or provider payloads"
+  },
+  "operator_link": {
+    "path": "/operator/login",
+    "token_bearing": false,
+    "note": "The only privileged navigation exposed publicly."
+  },
+  "page": {
+    "simulation_label_required": true,
+    "freshness_banner_required": true
+  },
+  "editor_acceptance_checklist": [
+    "Simulation label visible and not dismissible.",
+    "Freshness banner derived from generated_at.",
+    "Resource, urgency, and status filters with visible labels.",
+    "Markers use shape, text label, and color together.",
+    "Equivalent table/list reachable by a visible toggle with the same rows.",
+    "Detail content shows entity, resource, quantity basis, status, reference, updated time, and approximate distance.",
+    "Empty, unverified, review, and no-coordinate states are announced in text.",
+    "aria-live polite announcements for changes without moving focus.",
+    "Keyboard-only filters, markers, table, detail, and toggle.",
+    "200% text zoom and a narrow viewport do not clip content.",
+    "prefers-reduced-motion and prefers-contrast are respected.",
+    "No action token, session, sender address, or provider payload in bound data or page source."
+  ]
+}

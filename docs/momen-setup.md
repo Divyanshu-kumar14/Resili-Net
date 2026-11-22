@@ -3,6 +3,36 @@
 The public application binds the FastAPI public projection. It is read-only and
 receives no secret.
 
+## Status: editor spike blocked (account gate)
+
+Local contract verification is complete; the hosted editor work is not.
+
+| Item | Status |
+|---|---|
+| Public JSON endpoints, filters, ETag/304 | Verified by `tests/integration/test_public_api.py` |
+| Recorded DTO matches live projection | Verified by `tests/e2e/test_momen_contract.py` |
+| Local replay mirror and no-JS lite view | Verified by `tests/integration/test_public_views.py` |
+| Momen editor: native map acceptance | **Blocked** — no owner editor session |
+| Momen scheduled refresh interval | **Blocked** — same |
+| Published URL, CORS origin, asset policy | **Blocked** — same |
+| Measured reply-to-map p50/p95 | **Blocked** — same |
+| Hosted `/lite` transfer with JS disabled | **Blocked** — same |
+
+The ≤5 s reply-to-map gate is therefore **unmet and unmeasured**. A 5 s poll is
+not a pass. Record the blocker in the Phase 4 evidence file; do not convert it
+into a claim.
+
+## CORS
+
+Set `RESILINET_MOMEN_ORIGINS` to a JSON array of exact origins, for example
+`RESILINET_MOMEN_ORIGINS=["https://relief.example","https://staging.relief.example"]`.
+The service then installs CORS with those origins only, `GET` only, and no
+credentials; `"*"` is rejected at startup. `If-None-Match` is a
+preflight-allowed request header and the `ETag` response header is exposed,
+so the page can poll with conditional requests and read the validator.
+With the variable unset no CORS middleware is installed and a
+cross-origin browser read fails.
+
 ## Selected path (pending the editor spike)
 
 - **Preferred:** native external JSON API + native map component.

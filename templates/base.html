@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>{% block title %}ResiliNet{% endblock %}</title>
+  {% block head %}{% endblock %}
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, sans-serif; line-height: 1.5; margin: 0; }
@@ -33,8 +34,10 @@
   <header>
     <main>
       <nav aria-label="Primary">
+        {% block nav %}
         <a href="/">ResiliNet</a>
         <a href="/operator/reviews">Review queue</a>
+        {% endblock %}
       </nav>
     </main>
   </header>

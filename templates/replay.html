@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}Replay — {{ incident_name }} relief resources{% endblock %}
+{% block head %}<link rel="stylesheet" href="/static/app.css">{% endblock %}
+{% block nav %}
+<a href="/">ResiliNet</a>
+<a href="/replay">Replay map</a>
+<a href="{{ lite_url }}">Lite view</a>
+{% endblock %}
+{% block content %}
+<div id="replay-app" data-map-url="{{ map_url }}" data-incident-id="{{ incident_id }}" data-etag="{{ etag }}">
+  <p class="banner" role="note">
+    <strong>Recorded replay</strong> — not live service activity. Coordinates are a
+    schematic projection, not road directions.
+  </p>
+  {% if simulation %}
+  <p class="banner" role="note">
+    <strong>Simulation exercise</strong> — the entities and quantities in this
+    incident are fictional demonstration data.
+  </p>
+  {% endif %}
+
+  <h1>{{ incident_name }} — relief resources</h1>
+
+  <p id="freshness" data-generated-at="{{ generated_at }}">
+    <span id="freshness-text">Updated {{ freshness_seconds }} s ago.</span>
+    <span class="muted">Snapshot generated {{ generated_at }}.</span>
+  </p>
+
+  <form method="get" action="/replay" class="filters" aria-label="Filter relief resources">
+    <input type="hidden" name="incident_id" value="{{ incident_id }}">
+    <div class="filter-field">
+      <label for="resource">Resource</label>
+      <select id="resource" name="resource">
+        <option value="">All resources</option>
+        {% for option in options.resource %}
+        <option value="{{ option.value }}"{% if filters.resource == option.value %} selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <label for="urgency">Urgency</label>
+      <select id="urgency" name="urgency">
+        <option value="">All urgency levels</option>
+        {% for option in options.urgency %}
+        <option value="{{ option.value }}"{% if filters.urgency == option.value %} selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-field">
+      <label for="status">Need status</label>
+      <select id="status" name="status">
+        <option value="">All statuses</option>
+        {% for option in options.status %}
+        <option value="{{ option.value }}"{% if filters.status == option.value %} selected{% endif %}>{{ option.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="filter-actions">
+      <button type="submit">Apply filters</button>
+      <a href="/replay?incident_id={{ incident_id }}">Clear filters</a>
+    </div>
+  </form>
+
+  <h2 id="map-heading">Map</h2>
+  <p class="muted">
+    Each entity has one marker. Shape, text label, and color together identify the
+    kind; the label is never the only difference. Select a marker to jump to its row.
+  </p>
+  <svg class="map" viewBox="0 0 100 60" role="img" aria-labelledby="map-heading" aria-describedby="map-desc">
+    <desc id="map-desc">Schematic map of relief entities. Every marker is repeated in the data tables below.</desc>
+    {{ schematic_background|safe }}
+    <g id="markers">
+      {% for marker in markers %}
+      <a class="marker marker-{{ marker.kind }}" href="{{ marker.href }}" aria-label="{{ marker.name }}, {{ marker.kind }}">
+        <title>{{ marker.name }}</title>
+        {% if marker.shape == "circle" %}
+        <circle cx="{{ marker.x }}" cy="{{ marker.y }}" r="2.2"></circle>
+        {% elif marker.shape == "rect" %}
+        <rect x="{{ marker.x - 2.2 }}" y="{{ marker.y - 1.7 }}" width="4.4" height="3.4" rx="0.3"></rect>
+        {% elif marker.shape == "diamond" %}
+        <polygon points="{{ marker.x }},{{ marker.y - 2.6 }} {{ marker.x + 2.6 }},{{ marker.y }} {{ marker.x }},{{ marker.y + 2.6 }} {{ marker.x - 2.6 }},{{ marker.y }}"></polygon>
+        {% else %}
+        <polygon points="{{ marker.x }},{{ marker.y - 2.6 }} {{ marker.x + 2.6 }},{{ marker.y + 2 }} {{ marker.x - 2.6 }},{{ marker.y + 2 }}"></polygon>
+        {% endif %}
+        <text x="{{ marker.x + 3.2 }}" y="{{ marker.y + 1 }}">{{ marker.label }}</text>
+      </a>
+      {% endfor %}
+    </g>
+  </svg>
+
+  <p id="live-status" aria-live="polite" aria-atomic="true">
+    Showing {{ counts.needs }} needs and {{ counts.supplies }} supplies. This mirror
+    re-reads the public map every second and announces changes here without moving focus.
+  </p>
+
+  <details open>
+    <summary>Show or hide the data tables</summary>
+    <h2 id="tables-heading">Data tables</h2>
+
+    <h3>Needs</h3>
+    <table>
+      <caption>Needs reported for this incident. Quantities are stated or estimated.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Entity</th>
+          <th scope="col">Resource</th>
+          <th scope="col">Quantity</th>
+          <th scope="col">Basis</th>
+          <th scope="col">Urgency</th>
+          <th scope="col">Status</th>
+          <th scope="col">Flags</th>
+          <th scope="col">Reference</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="needs-body">
+        {% for need in needs %}
+        <tr id="need-{{ need.id }}">
+          <td>{{ need.entity_name }}</td>
+          <td>{{ need.resource | replace("_", " ") }}</td>
+          <td>{{ need.quantity }} {{ need.unit }}</td>
+          <td data-basis="{{ need.basis }}">{{ need.basis_label }}</td>
+          <td>{{ need.urgency }}</td>
+          <td>{{ need.status }}</td>
+          <td>{{ need.flags | join(", ") if need.flags else "—" }}</td>
+          <td>{{ need.ref }}</td>
+          <td>{{ need.updated_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h3>Supplies</h3>
+    <table>
+      <caption>Reported on-hand stock and the derived available quantity after active reservations.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Entity</th>
+          <th scope="col">Resource</th>
+          <th scope="col">On hand</th>
+          <th scope="col">Available</th>
+          <th scope="col">Unit</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="supplies-body">
+        {% for supply in supplies %}
+        <tr id="supply-{{ supply.id }}">
+          <td>{{ supply.entity_name }}</td>
+          <td>{{ supply.resource | replace("_", " ") }}</td>
+          <td>{{ supply.on_hand }}</td>
+          <td>{{ supply.available }}</td>
+          <td>{{ supply.unit }}</td>
+          <td>{{ supply.updated_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h3>Allocations</h3>
+    <table>
+      <caption>Proposed, confirmed, delivered, and cancelled allocations. A proposal is not a dispatch.</caption>
+      <thead>
+        <tr>
+          <th scope="col">Reference</th>
+          <th scope="col">Need</th>
+          <th scope="col">Entity</th>
+          <th scope="col">Quantity</th>
+          <th scope="col">Approx. distance (km)</th>
+          <th scope="col">Status</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody id="allocations-body">
+        {% for allocation in allocations %}
+        <tr id="allocation-{{ allocation.ref }}">
+          <td>{{ allocation.ref }}</td>
+          <td>{{ allocation.need_ref }}</td>
+          <td>{{ allocation.entity_name }}</td>
+          <td>{{ allocation.quantity }} {{ allocation.unit }}</td>
+          <td>{{ allocation.distance_km }}</td>
+          <td>{{ allocation.status }}</td>
+          <td>{{ allocation.updated_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </details>
+
+  <p><a href="{{ lite_url }}">Low-bandwidth text view without JavaScript</a></p>
+</div>
+<script src="/static/replay.js" defer></script>
+{% endblock %}

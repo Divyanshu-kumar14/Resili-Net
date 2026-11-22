@@ -1,0 +1,163 @@
+/* Public replay mirror: local styles only, no external fonts or images. */
+
+.banner {
+  background: #fff3cd;
+  border-left: 0.4rem solid #7a5a00;
+  color: #3d2c00;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: end;
+  border: 1px solid #767676;
+  border-radius: 0.35rem;
+  padding: 0.75rem 1rem;
+  margin: 1rem 0;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  min-width: 12rem;
+}
+
+.filter-field label {
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.filter-field select {
+  font: inherit;
+  padding: 0.4rem;
+  max-width: 18rem;
+}
+
+.filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.filter-actions button {
+  font: inherit;
+  padding: 0.5rem 0.9rem;
+  cursor: pointer;
+}
+
+.map {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #767676;
+  border-radius: 0.35rem;
+  background: #f4f4f4;
+}
+
+.marker {
+  color: #111;
+  cursor: pointer;
+}
+
+.marker text {
+  fill: #111;
+  font-family: system-ui, sans-serif;
+  font-size: 2.6px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: #f4f4f4;
+  stroke-width: 0.45px;
+}
+
+.marker-shelter circle {
+  fill: #005a9c;
+  stroke: #002b4a;
+  stroke-width: 0.35;
+}
+
+.marker-depot rect {
+  fill: #7a3e00;
+  stroke: #3d1f00;
+  stroke-width: 0.35;
+}
+
+.marker-hub polygon {
+  fill: #1b5e20;
+  stroke: #0a2f0d;
+  stroke-width: 0.35;
+}
+
+.marker-other polygon {
+  fill: #4a4a4a;
+  stroke: #1a1a1a;
+  stroke-width: 0.35;
+}
+
+.marker:focus-visible,
+.marker:focus {
+  outline: 0.25rem solid #005fcc;
+  outline-offset: 0.15rem;
+}
+
+table caption {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.4rem 0;
+}
+
+tbody tr:target {
+  outline: 0.2rem solid #005fcc;
+  outline-offset: -0.2rem;
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.muted {
+  color: #5a5a5a;
+}
+
+@media (max-width: 40rem) {
+  .filter-field,
+  .filter-field select {
+    min-width: 0;
+    width: 100%;
+    max-width: none;
+  }
+
+  table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .map,
+  .filters {
+    border-color: #000;
+  }
+
+  .marker text {
+    fill: #000;
+    stroke: #fff;
+  }
+
+  .muted {
+    color: #333;
+  }
+}
