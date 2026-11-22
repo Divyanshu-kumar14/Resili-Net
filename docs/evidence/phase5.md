@@ -146,5 +146,5 @@ is now 467 total (+7 evaluation, +9 worker recovery, +2 offline replay,
 | Published Momen map/list + `/lite` audit and ≤5 s gate | No Momen editor account (work-email wall; institute email is the route). Task 19 remains blocked; Phase 4 exit gate still unmet. |
 | Live MojoAuth magic-link login | The deployed service still carries the placeholder key; a real key (institute-email signup) unblocks it. |
 | Screen-reader (VoiceOver/NVDA) manual pass | No screen reader available on this host; automated axe + keyboard coverage stands in until then. |
-| GitHub Actions first run | `.github/workflows/test.yml` is new and unexercised until the next push. |
-| Phase 5 commits | Per-task commits from the plan (`test: add reproducible relief corpus…`, `feat: recover relief pipelines…`, `test: prove stock invariants…`, `test: verify complete network-independent replay…`, `feat: meet accessible relief map…`) are prepared but not executed; awaiting the user's go-ahead. |
+| GitHub Actions first run | **Resolved 2026-11-22**: run `45019756211` completed **success** on the Phase 5 push (frozen sync, ruff, mypy, full suite incl. PostgreSQL concurrency against the CI Postgres service). |
+| Phase 5 commits | **Executed 2026-11-22**: `ce5331c` (Task 20), `de5f02c` (Task 21), `4b8e744` (Task 22), `f9af5ff` (Task 23), `7eb4774` (Task 24); deploy of `7eb4774` verified live with `/api/v1/health` and `/api/v1/ready` (database + worker heartbeat ok). |
