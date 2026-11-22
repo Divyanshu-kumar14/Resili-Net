@@ -63,10 +63,21 @@ RESILINET_APP_ENV=replay uv run uvicorn resilinet.main:app --port 8000
 
 ## Before presenting
 
-- [ ] `uv run pytest -q` green; `uv run python scripts/evaluate.py` passes
-      (accuracy ≥ 90%, duplicate pairs 10/10).
-- [ ] `uv run python scripts/replay_demo.py` exits 0 with zero external
-      connection attempts.
-- [ ] Browser pass over `/replay` and `/replay/lite`: keyboard only, 200%
-      zoom, narrow viewport (Task 24 automates most of this).
-- [ ] Two rehearsals timed end-to-end (Task 27).
+- [x] `uv run pytest -q` green; `uv run python scripts/evaluate.py` passes
+      (accuracy ≥ 90%, duplicate pairs 10/10). Re-verified 2026-11-22
+      (486 passed, 1 skipped; 80/80 fields, 10/10 pairs, 30/30 outcomes).
+- [x] `uv run python scripts/replay_demo.py` exits 0 with zero external
+      connection attempts. Re-verified 2026-11-22
+      (30 messages, needs_total 12, pages 200/200/200).
+- [x] Cold offline replay rehearsal from a scratch database (Task 27):
+      migrated, seeded (`seed_demo.py`: 10 entities, 7 stock, 2 needs),
+      replayed, and publicly verified (`verify_public.py`: `ok: true`,
+      lite transfer 10,361 bytes, ETag revalidation 304) on 2026-11-22
+      with networking disabled for the replayed pipeline.
+- [x] Browser pass over `/replay` and `/replay/lite`: keyboard only, 200%
+      zoom, narrow viewport — automated by `pnpm run audit` (Task 24).
+- [ ] Live golden-path rehearsal timed end-to-end (Task 27) — **BLOCKED**:
+      no live credentials in this workspace, so the phone-email →
+      recommendation → map walk-through is unrehearsed. Say "switching to
+      recorded replay" before using the offline fallback (recorded output is
+      never presented as live).

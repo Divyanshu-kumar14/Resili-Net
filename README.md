@@ -11,17 +11,21 @@ consumes it.
 
 ## Status
 
-Phases 1–2 are locally verified: durable idempotent intake, a relational model
+Phases 1–5 are locally verified: durable idempotent intake, a relational model
 with Alembic migrations, a lease-based job runner, strict extraction with a
 deterministic prompt-injection audit, gazetteer-first cached geocoding, a
 one-round clarification flow, deterministic matching with a bounded critic,
-transactional stock reservations, and threaded recommendation replies with
-private coordinator confirmation grants. Secure action execution, the public
-map API and Momen UI, and formal process supervision/HA land in later phases; a
-live worker entrypoint and Render Blueprint are present. The live OpenAI or
-NVIDIA NIM, Nominatim, Agentboxd, and MojoAuth account gates remain unproven.
-See `docs/architecture.md`, `docs/evidence/phase0.md`,
-`docs/evidence/phase1.md`, and `docs/evidence/phase2.md`.
+transactional stock reservations, threaded recommendation replies, verified
+sessions with scoped single-use action grants, a minimal operator review queue,
+a privacy-safe public API with a Momen contract, an offline replay mirror and
+lite view, a 30-message evaluation corpus, bounded retries with dead letters,
+a PostgreSQL concurrency proof, and an accessibility audit. Phase 6 adds the
+validated Render Blueprint, a live smoke probe that refuses fake fallbacks,
+and a release rehearsal manifest. The live OpenAI or NVIDIA NIM, Nominatim,
+Agentboxd, and MojoAuth account gates remain unproven, and the published
+Momen page is still blocked on editor access. See `docs/architecture.md`,
+`docs/deployment.md`, `docs/evidence/release-checklist.md`, and
+`docs/evidence/phase0.md` through `docs/evidence/phase5.md`.
 
 ## Requirements
 
@@ -95,15 +99,28 @@ If you deploy a paid Render worker service instead, set
 `uv run python scripts/run_worker.py` there. Free web services sleep after
 inactivity and free Postgres expires after 30 days; use paid plans for a stable
 webhook and demo. Update `RESILINET_PUBLIC_BASE_URL` if Render assigns a
-different hostname than `resilinet-web.onrender.com`.
+different hostname than `resilinet-web.onrender.com`. Full runbook:
+`docs/deployment.md`. After deploy, run the live smoke probe (exits 2 naming
+the blocker when credentials are absent; it never uses fakes):
+
+```bash
+uv run python scripts/smoke_live.py --mode live --recipient tester@example.org
+```
 
 ## Checks
 
 ```bash
 uv run pytest -q
-uv run ruff check src tests
+uv run ruff check src scripts tests
 uv run mypy src
 ```
+
+Production and release gates: `tests/integration/test_production_config.py`
+(Blueprint safety, live-secret and cookie guards, no auto-seed, no fakes in
+live mode) and `tests/e2e/test_release_checklist.py` (evidence manifest in
+`docs/evidence/release-checklist.md`). Live-gated checks stay skipped without
+credentials: `uv run pytest tests/postgres -q` needs a local PostgreSQL
+(`docker-compose.test.yml`), and `pnpm run audit` needs the Node toolchain.
 
 ## Sponsors
 

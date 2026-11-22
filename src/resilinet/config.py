@@ -90,7 +90,10 @@ class Settings(BaseSettings):
     def _reject_wildcard_momen_origin(self) -> Self:
         # A wildcard would expose the public projection to every origin; the
         # allow-list only has meaning when every entry is an exact origin.
-        if any(origin.strip() == "*" for origin in self.momen_origins):
+        # Starlette matches allow_origins literally (only a bare "*" is
+        # special), so a pattern like "https://*.evil.com" would fail closed
+        # today — but it is still not an exact origin, so reject any "*".
+        if any("*" in origin for origin in self.momen_origins):
             raise ValueError("momen_origins must list exact origins, not '*'")
         return self
 

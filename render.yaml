@@ -44,3 +44,7 @@ services:
         sync: false
       - key: RESILINET_NVIDIA_API_KEY
         sync: false
+      # Present even though the default provider is NVIDIA: switching
+      # RESILINET_LLM_PROVIDER to openai must not require a Blueprint edit.
+      - key: RESILINET_OPENAI_API_KEY
+        sync: false

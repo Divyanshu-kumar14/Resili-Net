@@ -259,4 +259,4 @@ record.
 | MojoAuth magic link + callback encoding | optional until Phase 3; provide the key when the identity adapter lands | live identity |
 | Momen scheduled refresh + native map | provide editor access, run the checklist in `docs/momen-setup.md` | live public map |
 | OpenAI or NVIDIA NIM structured output | provide the selected key, confirm model quota and tool calling | live extraction |
-| Render deployment | owner approval of resources and production migration | release |
+| Render deployment | Blueprint validated (`render blueprints validate` → valid) and service healthy; production migration needs owner approval per release | release |
