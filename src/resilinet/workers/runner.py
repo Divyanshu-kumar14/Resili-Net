@@ -14,9 +14,12 @@ guarantee, proven by the Task 22 suite.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
+import time
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
@@ -28,6 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from ..db import utcnow
 from ..models import Job, JobStatus, JobType
 from ..observability import new_trace_id, reset_trace_id, set_trace_id
+from ..ports import CritiqueError, ExtractionError, ProviderUnavailableError
 from ..services.events import record_event
 
 logger = logging.getLogger("resilinet.workers")
@@ -37,6 +41,10 @@ MAX_BACKOFF_SECONDS = 300
 
 class PermanentJobError(RuntimeError):
     """The job cannot succeed on retry; dead-letter it immediately."""
+
+
+def _elapsed_ms(started: float) -> float:
+    return round((time.monotonic() - started) * 1000, 1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,29 +81,89 @@ class DurableWorker:
         self._jitter = jitter or random.random
 
     async def run_once(self) -> int:
-        """Claim and run at most one due job. Returns 1 when work was done."""
+        """Claim and run at most one due job. Returns 1 when work was done.
+
+        Outcome classification is typed, never blind: permanent errors
+        (``PermanentJobError``, schema-invalid extraction/critique, and
+        provider failures marked non-retryable) dead-letter immediately;
+        everything else retries with bounded exponential backoff until
+        ``max_attempts`` and then dead-letters. While the handler runs, a
+        heartbeat keeps extending the lease so a long job is not reclaimed
+        underneath its owner.
+        """
         claim = await self._claim()
         if claim is None:
             return 0
         token = set_trace_id(new_trace_id())
+        started = time.monotonic()
+        heartbeat = asyncio.create_task(self._heartbeat(claim))
         try:
             handler = self._handlers.get(claim.type)
             if handler is None:
                 await self._dead_letter(
-                    claim, f"no handler registered for {claim.type.value}"
+                    claim,
+                    f"no handler registered for {claim.type.value}",
+                    duration_ms=_elapsed_ms(started),
                 )
                 return 1
             try:
                 await handler(claim)
             except PermanentJobError as exc:
-                await self._dead_letter(claim, str(exc))
+                await self._dead_letter(
+                    claim, str(exc), duration_ms=_elapsed_ms(started)
+                )
+            except (ExtractionError, CritiqueError) as exc:
+                # Schema-invalid provider output cannot be fixed by retrying
+                # the same input unchanged.
+                await self._dead_letter(
+                    claim,
+                    f"{type(exc).__name__}: {exc}",
+                    duration_ms=_elapsed_ms(started),
+                )
+            except ProviderUnavailableError as exc:
+                if exc.retryable:
+                    await self._schedule_retry_or_dead_letter(
+                        claim, exc, duration_ms=_elapsed_ms(started)
+                    )
+                else:
+                    await self._dead_letter(
+                        claim,
+                        f"{type(exc).__name__}: {exc}",
+                        duration_ms=_elapsed_ms(started),
+                    )
             except Exception as exc:
-                await self._schedule_retry_or_dead_letter(claim, exc)
+                await self._schedule_retry_or_dead_letter(
+                    claim, exc, duration_ms=_elapsed_ms(started)
+                )
             else:
-                await self._succeed(claim)
+                await self._succeed(claim, duration_ms=_elapsed_ms(started))
             return 1
         finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
             reset_trace_id(token)
+
+    async def _heartbeat(self, claim: JobClaim) -> None:
+        """Extend the lease while the handler runs, fenced like _finish."""
+        interval = max(0.05, self._lease_seconds / 3)
+        while True:
+            await asyncio.sleep(interval)
+            now = self._clock()
+            async with self._session_factory() as session, session.begin():
+                await session.execute(
+                    sa.update(Job)
+                    .where(
+                        Job.id == claim.id,
+                        Job.status == JobStatus.LEASED,
+                        Job.lease_owner == self._worker_id,
+                        Job.attempts == claim.attempts,
+                    )
+                    .values(
+                        lease_expires_at=now
+                        + timedelta(seconds=self._lease_seconds)
+                    )
+                )
 
     async def _claim(self) -> JobClaim | None:
         now = self._clock()
@@ -137,14 +205,18 @@ class DurableWorker:
                 max_attempts=job.max_attempts,
             )
 
-    async def _succeed(self, claim: JobClaim) -> None:
+    async def _succeed(self, claim: JobClaim, *, duration_ms: float = 0.0) -> None:
         updated = await self._finish(
             claim,
             status=JobStatus.SUCCEEDED,
             available_at=None,
             last_error=None,
             event_type="job.succeeded",
-            payload={"job_id": str(claim.id), "job_type": claim.type.value},
+            payload={
+                "job_id": str(claim.id),
+                "job_type": claim.type.value,
+                "duration_ms": duration_ms,
+            },
         )
         if not updated:
             logger.warning(
@@ -201,11 +273,11 @@ class DurableWorker:
         return True
 
     async def _schedule_retry_or_dead_letter(
-        self, claim: JobClaim, error: Exception
+        self, claim: JobClaim, error: Exception, *, duration_ms: float = 0.0
     ) -> None:
         detail = f"{type(error).__name__}: {error}"[:400]
         if claim.attempts >= claim.max_attempts:
-            await self._dead_letter(claim, detail)
+            await self._dead_letter(claim, detail, duration_ms=duration_ms)
             return
         now = self._clock()
         delay = min(
@@ -224,6 +296,7 @@ class DurableWorker:
                 "job_type": claim.type.value,
                 "attempts": claim.attempts,
                 "error_type": type(error).__name__,
+                "duration_ms": duration_ms,
             },
         )
         if updated:
@@ -232,7 +305,9 @@ class DurableWorker:
                 extra={"job_id": str(claim.id), "job_type": claim.type.value},
             )
 
-    async def _dead_letter(self, claim: JobClaim, detail: str) -> None:
+    async def _dead_letter(
+        self, claim: JobClaim, detail: str, *, duration_ms: float = 0.0
+    ) -> None:
         updated = await self._finish(
             claim,
             status=JobStatus.DEAD_LETTER,
@@ -244,6 +319,7 @@ class DurableWorker:
                 "job_type": claim.type.value,
                 "attempts": claim.attempts,
                 "error_type": detail.split(":", 1)[0][:60],
+                "duration_ms": duration_ms,
             },
         )
         if updated:

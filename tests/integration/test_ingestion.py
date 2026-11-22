@@ -127,13 +127,22 @@ async def test_duplicate_event_creates_one_message_and_one_job(
             sa.select(sa.func.count(Message.id)).where(Message.incident_id == incident_id)
         )
         jobs = await session.scalar(sa.select(sa.func.count(Job.id)))
+        process_jobs = await session.scalar(
+            sa.select(sa.func.count(Job.id)).where(Job.dedupe_key.like("process:%"))
+        )
+        ack_jobs = await session.scalar(
+            sa.select(sa.func.count(Job.id)).where(Job.dedupe_key.like("ack:%"))
+        )
         accepted = await session.scalar(
             sa.select(sa.func.count(EventLog.id)).where(
                 EventLog.event_type == "message.accepted"
             )
         )
     assert messages == 1
-    assert jobs == 1
+    # One processing job (the dedupe invariant) plus its deadline-ack job.
+    assert process_jobs == 1
+    assert ack_jobs == 1
+    assert jobs == 2
     assert accepted == 1
 
 
@@ -391,7 +400,8 @@ async def test_rate_limit_queues_a_sender_visible_notice(
         jobs = await session.scalar(sa.select(sa.func.count(Job.id)))
         notices = list(await session.scalars(sa.select(OutboundEmail)))
     assert len(throttled) == 2
-    assert jobs == 2
+    # Two accepted messages x (process + deadline-ack); throttled get neither.
+    assert jobs == 4
     # At most one notice per sender per window prevents backscatter abuse.
     assert len(notices) == 1
     assert notices[0].kind == "throttle_notice"

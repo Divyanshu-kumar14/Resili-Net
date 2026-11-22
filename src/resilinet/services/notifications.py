@@ -188,6 +188,21 @@ class NotificationService:
             "reserved or promised. No allocation was created and no stock changed."
         )
 
+    def deadline_ack_text(self) -> str:
+        return (
+            "We received your message and it is still being processed. You do "
+            "not need to send it again; we will reply on this thread when there "
+            "is an update. No allocation was created and no stock changed yet."
+        )
+
+    def processing_failed_text(self) -> str:
+        return (
+            "We received your message, but we could not process it "
+            "automatically. A coordinator has been notified and will review "
+            "it. You do not need to send it again, and no stock was changed "
+            "by this failure."
+        )
+
     def wrong_sender_text(self) -> str:
         return (
             "This reply could not be applied to the earlier report because it came "

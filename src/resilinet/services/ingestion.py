@@ -39,6 +39,9 @@ SENDER_LIMIT_PER_HOUR = 20
 INCIDENT_LIMIT_PER_HOUR = 200
 
 _WINDOW = timedelta(hours=1)
+
+#: A still-unprocessed message earns exactly one acknowledgement after this.
+DEADLINE_ACK_DELAY = timedelta(seconds=15)
 _SIGNATURE_DELIMITER = re.compile(r"^--\s*$")
 _MOBILE_SIGNATURE = re.compile(r"^(sent from|get outlook for)\b", re.IGNORECASE)
 _QUOTE_HEADER = re.compile(r"^on\b.+\bwrote:\s*$", re.IGNORECASE)
@@ -232,6 +235,24 @@ class IngestionService:
                 available_at=now,
             )
             session.add(job)
+            if not deferred:
+                # Deadline acknowledgement: fires only if the message is
+                # still unprocessed 15 s after acceptance; the handler
+                # suppresses it when a final reply already exists.
+                session.add(
+                    Job(
+                        id=uuid4(),
+                        incident_id=self._incident_id,
+                        type=JobType.PROCESS_MESSAGE,
+                        payload={
+                            "message_id": str(message.id),
+                            "deadline_ack": True,
+                        },
+                        status=JobStatus.PENDING,
+                        dedupe_key=f"ack:{message.id}",
+                        available_at=now + DEADLINE_ACK_DELAY,
+                    )
+                )
             await record_event(
                 session,
                 incident_id=self._incident_id,

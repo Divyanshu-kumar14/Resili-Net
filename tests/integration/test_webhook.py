@@ -80,7 +80,8 @@ async def test_signed_webhook_is_accepted_once(
         row = await session.scalar(sa.select(Message))
         job = await session.scalar(sa.select(Job))
     assert messages == 1
-    assert jobs == 1
+    # One processing job (accepted once) plus its deadline-ack job.
+    assert jobs == 2
     assert row is not None and row.provider_message_id == "msg_01"
     assert job is not None
 

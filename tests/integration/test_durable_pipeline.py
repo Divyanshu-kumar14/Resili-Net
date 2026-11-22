@@ -546,4 +546,4 @@ async def test_duplicate_provider_event_runs_the_pipeline_once(
     state = await counts(session_factory)
     assert state["messages"] == 1
     assert state["reports"] == 1
-    assert state["jobs"] == 1
+    assert state["jobs"] == 2  # process + deadline ack for the one message

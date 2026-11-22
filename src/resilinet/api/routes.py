@@ -10,6 +10,7 @@ import sqlalchemy as sa
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
+from ..db import utcnow
 from ..models import Incident
 from ..ports import AdapterError, IgnoredWebhookEvent, WebhookVerificationError
 from ..security import (
@@ -34,6 +35,7 @@ from ..services.public import (
     PublicSnapshot,
 )
 from ..web.common import (
+    container,
     current_principal,
     identity_service,
     public_service,
@@ -52,6 +54,49 @@ router = APIRouter()
 async def health() -> dict[str, str]:
     """Liveness only: process is up and serving requests."""
     return {"status": "ok"}
+
+
+@router.get("/api/v1/ready", tags=["system"])
+async def ready(request: Request) -> Response:
+    """Readiness: database reachable and, for the in-app worker, heartbeating.
+
+    Liveness (`/health`) only proves the process answers. Readiness is what
+    an operator or load balancer should gate traffic on: it fails when the
+    database is unreachable or when the in-process durable worker has not
+    looped within 90 seconds. With an external worker, database health is
+    the only in-process signal and the worker is reported as external.
+    """
+    resolved = container(request)
+    database = "ok"
+    if resolved.session_factory is None:
+        database = "unavailable"
+    else:
+        try:
+            async with resolved.session_factory() as session:
+                await session.execute(sa.text("SELECT 1"))
+        except Exception:
+            database = "unavailable"
+
+    if resolved.settings.run_worker_in_app:
+        heartbeat = getattr(request.app.state, "worker_heartbeat", None)
+        if heartbeat is None:
+            worker = "missing"
+        elif (utcnow() - heartbeat).total_seconds() <= 90:
+            worker = "ok"
+        else:
+            worker = "stale"
+    else:
+        worker = "external"
+
+    is_ready = database == "ok" and worker in {"ok", "external"}
+    return JSONResponse(
+        status_code=200 if is_ready else 503,
+        content={
+            "status": "ready" if is_ready else "not_ready",
+            "database": database,
+            "worker": worker,
+        },
+    )
 
 
 def _public_snapshot_response(snapshot: PublicSnapshot | NotModified) -> Response:

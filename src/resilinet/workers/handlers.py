@@ -58,6 +58,8 @@ from ..models import (
     Supply,
 )
 from ..ports import (
+    CritiqueError,
+    ExtractionError,
     InboxProvider,
     IntelligenceProvider,
     MessageNotFoundError,
@@ -114,6 +116,17 @@ class _MatchingWork:
     rematch_need_ids: tuple[UUID, ...] = ()
 
 
+def _is_terminal(exc: Exception, claim: JobClaim) -> bool:
+    """True when the runner will dead-letter instead of scheduling a retry."""
+    if isinstance(exc, PermanentJobError):
+        return True
+    if isinstance(exc, (ExtractionError, CritiqueError)):
+        return True  # schema-invalid output: retrying unchanged cannot help
+    if isinstance(exc, ProviderUnavailableError) and not exc.retryable:
+        return True
+    return claim.attempts >= claim.max_attempts
+
+
 class MessageJobHandler:
     """Dispatch the two Phase 1 job types against the durable message store."""
 
@@ -145,12 +158,80 @@ class MessageJobHandler:
         )
 
     async def __call__(self, claim: JobClaim) -> None:
-        if claim.type is JobType.PROCESS_MESSAGE:
-            await self._process(claim)
-        elif claim.type is JobType.FETCH_CONTENT:
-            await self._fetch(claim)
-        else:  # pragma: no cover - the runner only registers these two
-            raise PermanentJobError(f"unsupported job type {claim.type.value}")
+        try:
+            if claim.payload.get("deadline_ack"):
+                await self._process_ack(claim)
+            elif claim.type is JobType.PROCESS_MESSAGE:
+                await self._process(claim)
+            elif claim.type is JobType.FETCH_CONTENT:
+                await self._fetch(claim)
+            else:  # pragma: no cover - the runner only registers these two
+                raise PermanentJobError(f"unsupported job type {claim.type.value}")
+        except Exception as exc:
+            # Every terminal failure gets an auditable outcome before the
+            # runner records the dead letter: an operator review case plus a
+            # truthful sender notice, each exactly once. The classification
+            # mirrors the runner's: permanent errors and exhausted attempts.
+            if _is_terminal(exc, claim):
+                await self._terminal_failure(claim, exc)
+            raise
+
+    async def _process_ack(self, claim: JobClaim) -> None:
+        """Deadline acknowledgement: sent once, only while still unprocessed."""
+        message_id = self._message_id(claim)
+        snapshot = await self._load_message(message_id)
+        if snapshot is None:
+            raise PermanentJobError("deadline ack target no longer exists")
+        message, sender = snapshot
+        if message.status is not MessageStatus.QUEUED:
+            return  # Processing finished; the final reply already went out.
+        kind = f"deadline_ack:{message.id}"
+        async with self._session_factory() as session:
+            replied = await session.scalar(
+                sa.select(OutboundEmail.id).where(
+                    OutboundEmail.message_id == message.id,
+                    OutboundEmail.kind != kind,
+                    OutboundEmail.status != OutboundStatus.FAILED,
+                )
+            )
+            if replied is not None:
+                return  # A reply is already queued or sent; never ack after it.
+        async with self._session_factory() as session, session.begin():
+            await self._enqueue_guarded(
+                session,
+                message=message,
+                sender=sender,
+                kind=kind,
+                body=self._notifications.deadline_ack_text(),
+            )
+
+    async def _terminal_failure(self, claim: JobClaim, exc: Exception) -> None:
+        """Escalate a dead-lettered message to review and notify its sender."""
+        try:
+            message_id = self._message_id(claim)
+            snapshot = await self._load_message(message_id)
+            if snapshot is None:
+                return
+            message, sender = snapshot
+            async with self._session_factory() as session, session.begin():
+                await ReviewService(session).escalate(
+                    incident_id=message.incident_id,
+                    kind=ReviewCaseKind.DEAD_LETTER,
+                    reason=(
+                        f"message processing failed after {claim.attempts} "
+                        f"attempt(s): {type(exc).__name__}"
+                    ),
+                    source_message_id=message.id,
+                )
+                await self._enqueue_guarded(
+                    session,
+                    message=message,
+                    sender=sender,
+                    kind=f"processing_failed:{message.id}",
+                    body=self._notifications.processing_failed_text(),
+                )
+        except Exception:
+            logger.exception("terminal_failure_hook_failed")
 
     # -- process -----------------------------------------------------------
 

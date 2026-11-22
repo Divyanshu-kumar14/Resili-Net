@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from .api.routes import router
 from .composition import build_auth_provider, build_inbox_provider
 from .config import Settings
-from .db import create_engine, create_session_factory
+from .db import create_engine, create_session_factory, utcnow
 from .observability import (
     TraceIdMiddleware,
     configure_logging,
@@ -82,6 +82,9 @@ async def _run_in_app_worker(app: FastAPI) -> None:
                 container.session_factory,
                 container.inbox,
                 stop=stop,
+                on_heartbeat=lambda: setattr(
+                    app.state, "worker_heartbeat", utcnow()
+                ),
             )
             return
         except asyncio.CancelledError:

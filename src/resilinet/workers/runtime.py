@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import signal
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -116,8 +117,14 @@ async def build_worker_runtime(
     )
 
 
-async def run_worker_loop(runtime: WorkerRuntime) -> None:
+async def run_worker_loop(
+    runtime: WorkerRuntime,
+    *,
+    on_heartbeat: Callable[[], None] | None = None,
+) -> None:
     while not runtime.stop.is_set():
+        if on_heartbeat is not None:
+            on_heartbeat()
         processed = await runtime.worker.run_once()
         delivered = await runtime.outbox.deliver_due()
         if not processed and not delivered:
@@ -140,6 +147,7 @@ async def run_worker(
     inbox: InboxProvider,
     *,
     stop: asyncio.Event | None = None,
+    on_heartbeat: Callable[[], None] | None = None,
 ) -> None:
     """Run the worker until ``stop`` is set.
 
@@ -162,7 +170,7 @@ async def run_worker(
                 "provider": settings.llm_provider,
             },
         )
-        await run_worker_loop(runtime)
+        await run_worker_loop(runtime, on_heartbeat=on_heartbeat)
     finally:
         await close_worker_runtime(runtime)
         logger.info("worker_stopped")
