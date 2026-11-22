@@ -1,0 +1,160 @@
+{
+  "simulation": true,
+  "note": "Fictional demo seed. Coordinates come from fixtures/gazetteer.json. Memberships are seeded unverified; nobody receives a token from seeding.",
+  "incident": {
+    "name": "Demo Incident \u2014 Simulation",
+    "simulation": true
+  },
+  "entities": [
+    {
+      "name": "Asha Shelter",
+      "type": "shelter",
+      "place": "Gandhi Park",
+      "lat": "22.572600",
+      "lon": "88.363900"
+    },
+    {
+      "name": "Riverbank Shelter",
+      "type": "shelter",
+      "place": "River Road",
+      "lat": "22.576900",
+      "lon": "88.370100"
+    },
+    {
+      "name": "Hillview Shelter",
+      "type": "shelter",
+      "place": "Central School",
+      "lat": "22.568400",
+      "lon": "88.359200"
+    },
+    {
+      "name": "Lakeside Shelter",
+      "type": "shelter",
+      "place": "Lake View",
+      "lat": "22.574500",
+      "lon": "88.366500"
+    },
+    {
+      "name": "Old Town Shelter",
+      "type": "shelter",
+      "place": "Market Square",
+      "lat": "22.571000",
+      "lon": "88.361000"
+    },
+    {
+      "name": "Stadium Shelter",
+      "type": "shelter",
+      "place": "Stadium Ground",
+      "lat": "22.569000",
+      "lon": "88.358000"
+    },
+    {
+      "name": "Central Depot",
+      "type": "depot",
+      "place": "Community Hall",
+      "lat": "22.573500",
+      "lon": "88.365000"
+    },
+    {
+      "name": "North Depot",
+      "type": "depot",
+      "place": "Bus Stand",
+      "lat": "22.578000",
+      "lon": "88.371500"
+    },
+    {
+      "name": "Riverside Depot",
+      "type": "depot",
+      "place": "Old Bridge",
+      "lat": "22.575500",
+      "lon": "88.368800"
+    },
+    {
+      "name": "Hill Depot",
+      "type": "depot",
+      "place": "Hill Road",
+      "lat": "22.567000",
+      "lon": "88.357000"
+    }
+  ],
+  "stock": [
+    {
+      "entity": "Central Depot",
+      "resource": "potable_water",
+      "quantity": "500",
+      "unit": "l"
+    },
+    {
+      "entity": "Central Depot",
+      "resource": "blankets",
+      "quantity": "75",
+      "unit": "count"
+    },
+    {
+      "entity": "North Depot",
+      "resource": "food",
+      "quantity": "200",
+      "unit": "meal"
+    },
+    {
+      "entity": "North Depot",
+      "resource": "blankets",
+      "quantity": "100",
+      "unit": "count"
+    },
+    {
+      "entity": "Riverside Depot",
+      "resource": "potable_water",
+      "quantity": "378.500",
+      "unit": "l"
+    },
+    {
+      "entity": "Hill Depot",
+      "resource": "medicine",
+      "quantity": "50",
+      "unit": "boxes"
+    },
+    {
+      "entity": "Asha Shelter",
+      "resource": "sanitation",
+      "quantity": "10",
+      "unit": "kits"
+    }
+  ],
+  "needs": [
+    {
+      "ref": "RN-000001",
+      "entity": "Stadium Shelter",
+      "resource": "blankets",
+      "quantity": "40",
+      "unit": "count",
+      "source": "stated",
+      "status": "open"
+    },
+    {
+      "ref": "RN-000002",
+      "entity": "Old Town Shelter",
+      "resource": "sanitation",
+      "quantity": "25",
+      "unit": "kits",
+      "source": "stated",
+      "status": "open"
+    }
+  ],
+  "memberships": [
+    {
+      "address": "operator@example.org",
+      "role": "operator"
+    },
+    {
+      "address": "asha-coordinator@example.org",
+      "role": "entity_coordinator",
+      "entity": "Asha Shelter"
+    },
+    {
+      "address": "depot-coordinator@example.org",
+      "role": "depot_coordinator",
+      "entity": "Central Depot"
+    }
+  ]
+}

@@ -1,0 +1,696 @@
+{
+  "simulation": true,
+  "note": "Recorded deterministic extractions for offline replay (Task 23). One entry per corpus marker; validated against fixtures/messages.json by tests/e2e/test_evaluation.py.",
+  "extracts": {
+    "DEMO-M01": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "critical",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "50",
+          "unit": "gallons"
+        }
+      ]
+    },
+    "DEMO-M02": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Riverbank Shelter",
+        "entity_type": "shelter",
+        "location_text": "near River Road",
+        "headcount": null,
+        "urgency": "high",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "food",
+          "quantity": "120",
+          "unit": "meals"
+        }
+      ]
+    },
+    "DEMO-M03": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Hillview Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Central School",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "blankets",
+          "quantity": "60",
+          "unit": "blankets"
+        }
+      ]
+    },
+    "DEMO-M04": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Lakeside Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Lake View",
+        "headcount": 40,
+        "urgency": "high",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.9,
+          "headcount": 0.95
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M05": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Old Town Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Market Square",
+        "headcount": 25,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.9,
+          "headcount": 0.95
+        }
+      },
+      "reports": [
+        {
+          "resource": "food",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M06": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Stadium Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Stadium Ground",
+        "headcount": null,
+        "urgency": "high",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "medicine",
+          "quantity": "20",
+          "unit": "boxes"
+        }
+      ]
+    },
+    "DEMO-M07": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "sanitation",
+          "quantity": "30",
+          "unit": "kits"
+        }
+      ]
+    },
+    "DEMO-M08": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Riverbank Shelter",
+        "entity_type": "shelter",
+        "location_text": "near River Road",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "200",
+          "unit": "litres"
+        }
+      ]
+    },
+    "DEMO-M09": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Hillview Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Central School",
+        "headcount": 80,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.95
+        }
+      },
+      "reports": [
+        {
+          "resource": "shelter_space",
+          "quantity": "80",
+          "unit": "people"
+        }
+      ]
+    },
+    "DEMO-M10": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Lakeside Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Lake View",
+        "headcount": null,
+        "urgency": "low",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "fuel",
+          "quantity": "40",
+          "unit": "l"
+        }
+      ]
+    },
+    "DEMO-M11": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "Central Depot",
+        "entity_type": "depot",
+        "location_text": "near Community Hall",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "500",
+          "unit": "l"
+        }
+      ]
+    },
+    "DEMO-M12": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "North Depot",
+        "entity_type": "depot",
+        "location_text": "near Bus Stand",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "food",
+          "quantity": "200",
+          "unit": "meals"
+        },
+        {
+          "resource": "blankets",
+          "quantity": "100",
+          "unit": "units"
+        }
+      ]
+    },
+    "DEMO-M13": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "Riverside Depot",
+        "entity_type": "depot",
+        "location_text": "near Old Bridge",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "100",
+          "unit": "gallons"
+        }
+      ]
+    },
+    "DEMO-M14": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "Hill Depot",
+        "entity_type": "depot",
+        "location_text": "near Hill Road",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "medicine",
+          "quantity": "50",
+          "unit": "boxes"
+        }
+      ]
+    },
+    "DEMO-M15": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "Central Depot",
+        "entity_type": "depot",
+        "location_text": "near Community Hall",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "blankets",
+          "quantity": "75",
+          "unit": "units"
+        }
+      ]
+    },
+    "DEMO-M16": {
+      "context": {
+        "kind": "QUERY",
+        "entity_name": "Stadium Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "normal",
+        "reference_id": "RN-000001",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M17": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "Central Depot",
+        "entity_type": "depot",
+        "location_text": "near Community Hall",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "450",
+          "unit": "l"
+        }
+      ]
+    },
+    "DEMO-M18": {
+      "context": {
+        "kind": "CANCEL",
+        "entity_name": "Old Town Shelter",
+        "entity_type": "shelter",
+        "location_text": "near River Road",
+        "headcount": null,
+        "urgency": "normal",
+        "reference_id": "RN-000002",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "sanitation",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M19": {
+      "context": {
+        "kind": "QUERY",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "normal",
+        "reference_id": "RN-999999",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M20": {
+      "context": {
+        "kind": "SUPPLY",
+        "entity_name": "North Depot",
+        "entity_type": "depot",
+        "location_text": "near Bus Stand",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "food",
+          "quantity": "180",
+          "unit": "meals"
+        }
+      ]
+    },
+    "DEMO-M21": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "high",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.4,
+          "headcount": 0.3
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ],
+      "needs_clarification": [
+        "quantity"
+      ]
+    },
+    "DEMO-M22": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Riverbank Shelter",
+        "entity_type": "shelter",
+        "location_text": "near River Road",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.5,
+          "headcount": 0.5
+        }
+      },
+      "reports": [
+        {
+          "resource": "food",
+          "quantity": "30",
+          "unit": null
+        }
+      ],
+      "needs_clarification": [
+        "unit"
+      ]
+    },
+    "DEMO-M23": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": null,
+        "entity_type": "shelter",
+        "location_text": null,
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.2,
+          "items": 0.8,
+          "headcount": 0.2
+        }
+      },
+      "reports": [
+        {
+          "resource": "blankets",
+          "quantity": "100",
+          "unit": "blankets"
+        }
+      ],
+      "needs_clarification": [
+        "entity_name"
+      ]
+    },
+    "DEMO-M24": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Hillview Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Central School",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.9,
+          "items": 0.6,
+          "headcount": 0.5
+        }
+      },
+      "reports": [
+        {
+          "resource": "blankets",
+          "quantity": "40",
+          "unit": "blankets"
+        },
+        {
+          "resource": "potable_water",
+          "quantity": "90",
+          "unit": "l"
+        }
+      ],
+      "needs_clarification": [
+        "split"
+      ],
+      "split_required": true
+    },
+    "DEMO-M25": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Lakeside Shelter",
+        "entity_type": "shelter",
+        "location_text": "near the big ground past the old place",
+        "headcount": 60,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.2,
+          "items": 0.7,
+          "headcount": 0.8
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ],
+      "needs_clarification": [
+        "location"
+      ]
+    },
+    "DEMO-M26": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "critical",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "45",
+          "unit": "gallons"
+        }
+      ]
+    },
+    "DEMO-M27": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Lakeside Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Lake View",
+        "headcount": null,
+        "urgency": "high",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.9,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "100",
+          "unit": "l"
+        }
+      ]
+    },
+    "DEMO-M28": {
+      "context": {
+        "kind": "NEED",
+        "entity_name": "Riverbank Shelter",
+        "entity_type": "shelter",
+        "location_text": "near River Road",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.9,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": "190",
+          "unit": "litres"
+        }
+      ]
+    },
+    "DEMO-M29": {
+      "context": {
+        "kind": "OTHER",
+        "entity_name": "Asha Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "normal",
+        "confidence": {
+          "location": 0.9,
+          "items": 0.9,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "other",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    },
+    "DEMO-M30": {
+      "context": {
+        "kind": "CANCEL",
+        "entity_name": "Stadium Shelter",
+        "entity_type": "shelter",
+        "location_text": "near Gandhi Park",
+        "headcount": null,
+        "urgency": "high",
+        "reference_id": "RN-000001",
+        "confidence": {
+          "location": 0.95,
+          "items": 0.95,
+          "headcount": 0.9
+        }
+      },
+      "reports": [
+        {
+          "resource": "potable_water",
+          "quantity": null,
+          "unit": null
+        }
+      ]
+    }
+  }
+}

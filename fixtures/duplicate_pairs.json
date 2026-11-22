@@ -1,0 +1,76 @@
+{
+  "simulation": true,
+  "note": "Ten duplicate-decision pairs (six true, four distinct) evaluated against resilinet.domain.duplicates.find_duplicate. Coordinates are fictional (Gandhi Park area). A duplicate needs the same entity, or a highly similar name within 150 m, inside a 12 h window, with equal resource and unit.",
+  "pairs": [
+    {
+      "id": "P01",
+      "expected": "duplicate",
+      "why": "same entity, same resource and unit",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000001", "entity_name": "Asha Shelter", "resource": "potable_water", "unit": "l", "lat": "22.572600", "lon": "88.363900", "age_hours": 1},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000001", "entity_name": "Asha Shelter", "resource": "potable_water", "unit": "l", "lat": "22.572600", "lon": "88.363900"}
+    },
+    {
+      "id": "P02",
+      "expected": "duplicate",
+      "why": "identical normalised name, different entity record, ~100 m apart",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000002", "entity_name": "Asha Shelter", "resource": "potable_water", "unit": "l", "lat": "22.572600", "lon": "88.363900", "age_hours": 2},
+      "second": {"entity_id": "22222222-2222-4222-8222-000000000002", "entity_name": "Asha shelter", "resource": "potable_water", "unit": "l", "lat": "22.573500", "lon": "88.363900"}
+    },
+    {
+      "id": "P03",
+      "expected": "duplicate",
+      "why": "highly similar name (suffix added), ~90 m apart",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000003", "entity_name": "Riverbank Shelter", "resource": "food", "unit": "meal", "lat": "22.576900", "lon": "88.370100", "age_hours": 1},
+      "second": {"entity_id": "22222222-2222-4222-8222-000000000003", "entity_name": "Riverbank Shelter Home", "resource": "food", "unit": "meal", "lat": "22.577700", "lon": "88.370100"}
+    },
+    {
+      "id": "P04",
+      "expected": "duplicate",
+      "why": "same entity record wins even when reported far from the first pin",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000004", "entity_name": "Hillview Shelter", "resource": "blankets", "unit": "count", "lat": "22.568400", "lon": "88.359200", "age_hours": 3},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000004", "entity_name": "Hillview Shelter", "resource": "blankets", "unit": "count", "lat": "22.586400", "lon": "88.359200"}
+    },
+    {
+      "id": "P05",
+      "expected": "duplicate",
+      "why": "similar name, ~55 m apart",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000005", "entity_name": "Lakeside Shelter", "resource": "potable_water", "unit": "l", "lat": "22.574500", "lon": "88.366500", "age_hours": 1},
+      "second": {"entity_id": "22222222-2222-4222-8222-000000000005", "entity_name": "Lakeside Shelters", "resource": "potable_water", "unit": "l", "lat": "22.575000", "lon": "88.366500"}
+    },
+    {
+      "id": "P06",
+      "expected": "duplicate",
+      "why": "same entity near the edge of the 12 h window (11 h)",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000006", "entity_name": "Old Town Shelter", "resource": "food", "unit": "meal", "lat": "22.571000", "lon": "88.361000", "age_hours": 11},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000006", "entity_name": "Old Town Shelter", "resource": "food", "unit": "meal", "lat": "22.571000", "lon": "88.361000"}
+    },
+    {
+      "id": "P07",
+      "expected": "distinct",
+      "why": "same entity but a different resource is a separate need",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000007", "entity_name": "Asha Shelter", "resource": "potable_water", "unit": "l", "lat": "22.572600", "lon": "88.363900", "age_hours": 1},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000007", "entity_name": "Asha Shelter", "resource": "food", "unit": "meal", "lat": "22.572600", "lon": "88.363900"}
+    },
+    {
+      "id": "P08",
+      "expected": "distinct",
+      "why": "similar name but ~2 km apart: proximity alone never merges shelters",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000008", "entity_name": "Stadium Shelter", "resource": "potable_water", "unit": "l", "lat": "22.569000", "lon": "88.358000", "age_hours": 1},
+      "second": {"entity_id": "22222222-2222-4222-8222-000000000008", "entity_name": "Stadium Shelter", "resource": "potable_water", "unit": "l", "lat": "22.587000", "lon": "88.358000"}
+    },
+    {
+      "id": "P09",
+      "expected": "distinct",
+      "why": "same entity and resource family but a different unit is not merged",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000009", "entity_name": "Hillview Shelter", "resource": "blankets", "unit": "count", "lat": "22.568400", "lon": "88.359200", "age_hours": 1},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000009", "entity_name": "Hillview Shelter", "resource": "blankets", "unit": "l", "lat": "22.568400", "lon": "88.359200"}
+    },
+    {
+      "id": "P10",
+      "expected": "distinct",
+      "why": "same everything but the first need is 13 h old, outside the window",
+      "first": {"entity_id": "11111111-1111-4111-8111-000000000010", "entity_name": "Lakeside Shelter", "resource": "potable_water", "unit": "l", "lat": "22.574500", "lon": "88.366500", "age_hours": 13},
+      "second": {"entity_id": "11111111-1111-4111-8111-000000000010", "entity_name": "Lakeside Shelter", "resource": "potable_water", "unit": "l", "lat": "22.574500", "lon": "88.366500"}
+    }
+  ]
+}
