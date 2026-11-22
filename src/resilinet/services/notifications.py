@@ -53,6 +53,29 @@ class RecommendationLine:
     requested_quantity: Quantity | None = None
 
 
+#: Display labels for clarification fields. Keys are matched case-insensitively
+#: after stripping; anything unlisted falls back to the field name with
+#: underscores replaced by spaces. Labels keep the raw field word (location,
+#: quantity, headcount, urgency) so replies stay matchable, and near-duplicates
+#: such as "entity location" and "location" collapse to one line via the
+#: dedupe in :meth:`NotificationService.clarification_text`.
+_CLARIFICATION_LABELS = {
+    "urgency": "urgency — how urgent is this? (critical, high, medium, or low)",
+    "quantity": "quantity — how much is needed?",
+    "resource quantity": "quantity — how much is needed?",
+    "amount": "quantity — how much is needed?",
+    "location": "location — where is this needed?",
+    "entity location": "location — where is this needed?",
+    "place": "location — where is this needed?",
+    "entity_name": "name — which shelter or depot is this for?",
+    "entity": "name — which shelter or depot is this for?",
+    "name": "name — which shelter or depot is this for?",
+    "entity_type": "type — is this a shelter or a depot?",
+    "headcount": "headcount — number of people",
+    "people": "headcount — number of people",
+    "persons": "headcount — number of people",
+}
+
 class NotificationService:
     def compose_recommendation(
         self,
@@ -141,14 +164,21 @@ class NotificationService:
         return _reply_to(message, self.clarification_text(fields))
 
     def clarification_text(self, fields: list[str]) -> str:
-        labels = ", ".join(field.replace("_", " ") for field in fields)
-        count = f"{len(fields)} detail" + ("" if len(fields) == 1 else "s")
-        return (
-            "Thanks for getting in touch — before I can match this, I'm missing "
-            f"{count}: {labels}. Just reply with the {labels} and I'll carry on "
-            "from here. I won't guess at a location, quantity, or resource — "
-            "I'd rather ask than get it wrong."
-        )
+        seen: list[str] = []
+        for field in fields:
+            label = _CLARIFICATION_LABELS.get(field.strip().lower(), field.replace("_", " "))
+            if label not in seen:
+                seen.append(label)
+        count = f"{len(seen)} detail" + ("" if len(seen) == 1 else "s")
+        lines = [
+            "Thanks for getting in touch — before I can match this, "
+            f"I'm missing {count}:",
+            *(f"- {label}" for label in seen),
+            "Just reply with the details above and I'll carry on from here. "
+            "I won't guess at a location, quantity, or resource — I'd rather "
+            "ask than get it wrong.",
+        ]
+        return "\n".join(lines)
 
     def split_text(self) -> str:
         return (
