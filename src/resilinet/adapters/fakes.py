@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from ..ports import (
@@ -379,6 +380,18 @@ class FakeIntelligenceProvider:
     def set_fixture(self, marker: str, parsed: ParsedEmail) -> None:
         """Add or replace one deterministic extraction fixture."""
         self._fixtures[marker] = parsed
+
+    @classmethod
+    def from_recorded(cls, extracts: Mapping[str, Any]) -> FakeIntelligenceProvider:
+        """Build the deterministic provider from recorded extraction fixtures.
+
+        Used by replay mode: every result was recorded ahead of time, carries
+        its fixture marker, and can be re-validated against the corpus.
+        """
+        fixtures = {
+            marker: ParsedEmail.model_validate(raw) for marker, raw in extracts.items()
+        }
+        return cls(fixtures)
 
     async def critique(self, proposal: CriticContext) -> CriticVerdict:
         self.critique_calls.append(proposal)

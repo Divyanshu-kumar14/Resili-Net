@@ -2,16 +2,34 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from .adapters.agentboxd import AgentboxdInboxProvider
+from .adapters.fakes import FakeInboxProvider, FakeIntelligenceProvider
 from .adapters.mojoauth import MojoAuthAuthProvider
 from .adapters.nvidia import NvidiaIntelligenceProvider
 from .adapters.openai import OpenAIIntelligenceProvider
 from .config import Settings
 from .ports import AuthProvider, InboxProvider, IntelligenceProvider
 
+RECORDED_EXTRACTS_PATH = (
+    Path(__file__).resolve().parents[2] / "fixtures" / "replay" / "extracts.json"
+)
+
+
+def _replay_intelligence() -> FakeIntelligenceProvider:
+    data = json.loads(RECORDED_EXTRACTS_PATH.read_text(encoding="utf-8"))
+    return FakeIntelligenceProvider.from_recorded(data["extracts"])
+
 
 def build_inbox_provider(settings: Settings) -> InboxProvider:
-    """Build the Agentboxd inbox adapter used by the webhook and worker."""
+    """Build the Agentboxd inbox adapter used by the webhook and worker.
+
+    Replay mode never constructs the live adapter, even if secrets exist.
+    """
+    if settings.is_replay:
+        return FakeInboxProvider(webhook_secret="replay")
 
     api_key = settings.secret_value("agentboxd_api_key")
     webhook_secret = settings.secret_value("agentboxd_webhook_secret")
@@ -32,6 +50,8 @@ def build_auth_provider(settings: Settings) -> AuthProvider | None:
     occur; routes then serve only generic pages. Live mode fails startup
     earlier if the key is absent.
     """
+    if settings.is_replay:
+        return None
     api_key = settings.secret_value("mojoauth_api_key")
     if api_key is None:
         return None
@@ -47,8 +67,11 @@ def build_intelligence_provider(settings: Settings) -> IntelligenceProvider:
 
     Live mode already guarantees the selected provider's key is present; the
     explicit checks keep test/replay misuse loud instead of constructing a
-    provider that would fail on its first request.
+    provider that would fail on its first request. Replay mode always gets
+    the recorded deterministic provider, even when live keys are present.
     """
+    if settings.is_replay:
+        return _replay_intelligence()
 
     if settings.llm_provider == "nvidia":
         api_key = settings.secret_value("nvidia_api_key")
