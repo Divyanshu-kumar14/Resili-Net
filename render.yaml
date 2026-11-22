@@ -40,5 +40,7 @@ services:
         sync: false
       - key: RESILINET_AGENTBOXD_WEBHOOK_SECRET
         sync: false
+      - key: RESILINET_MOJOAUTH_API_KEY
+        sync: false
       - key: RESILINET_NVIDIA_API_KEY
         sync: false
