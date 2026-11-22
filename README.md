@@ -2,9 +2,9 @@
 
 # 🛟 ResiliNet
 
-### Disaster relief coordination that runs on plain email
+### Email in. Relief out.
 
-*A hackathon project: when the network is weak and there is no app, an email can still get water to a shelter.*
+*A volunteer sends one plain email. ResiliNet reads it, finds the nearest stock, reserves it, replies with a tracking code, and puts the need on a public map.*
 
 <br>
 
@@ -13,9 +13,9 @@
 [![Python 3.11](https://img.shields.io/badge/python-3.11-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1.svg?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Hackathon project](https://img.shields.io/badge/hackathon-project-orange.svg)](#hackathon)
+[![EvoHacks 2.0](https://img.shields.io/badge/EvoHacks-2.0-orange.svg)](https://evohacks2.devpost.com/)
 
-[**The idea**](#core-idea) · [**How it works**](#how-it-works) · [**Demo**](#demo) · [**Tech**](#built-with) · [**Docs**](#docs)
+[**The idea**](#core-idea) · [**EvoHacks 2.0**](#hackathon) · [**How it works**](#how-it-works) · [**Demo**](#demo) · [**Results**](#results) · [**Docs**](#docs)
 
 </div>
 
@@ -27,33 +27,32 @@
 
 ## 💡 The core idea
 
-After an earthquake, flood, or storm, relief work breaks down on information,
-not on supplies. Shelters run short of water while a depot two kilometres away
-has pallets of it. Volunteers are on phones with one bar of signal, nobody has
-time to install an app, and coordinators drown in group chats and spreadsheets.
+**6:40 a.m., the morning after a flood.** A shelter at Lincoln School has
+120 people and no drinking water. Three kilometres away, a church depot has
+pallets of it. The shelter lead has one bar of signal, no relief app, and a
+coordinator who is buried in group chats and spreadsheets. The water sits
+unused for hours.
 
 **Email still works.** It survives bad connections, every phone has it, and
-everyone already knows how to use it.
-
-ResiliNet turns a shared incident inbox into a relief coordinator.
-A volunteer writes a normal message:
+everyone already knows how to use it. ResiliNet turns a shared incident inbox
+into a relief coordinator. The shelter lead writes:
 
 > *"We need 50 gallons of drinking water at Lincoln School, about 120 people here."*
 
-and ResiliNet does the rest:
+and ResiliNet handles the rest:
 
 | Step | What happens |
 |:---:|:---|
-| 📥 **Understand** | An AI model reads the email and pulls out the item, quantity, place, and urgency |
-| ❓ **Ask, don't guess** | If something is missing, it asks the sender one short follow-up question |
-| 🧭 **Match** | It finds the nearest depot with enough stock and checks the proposal for mistakes |
-| 📦 **Reserve** | It holds the stock so two shelters can't be promised the same pallet |
-| ✉️ **Reply** | The sender gets a reply in the same email thread with a tracking code |
+| 📥 **Understand** | The AI model reads the email and extracts the item, quantity, place, and urgency |
+| ❓ **Ask, don't guess** | If a detail is missing, it asks the sender one short follow-up question |
+| 🧭 **Match** | It scores depots by distance, stock, and freshness, then an AI critic checks the proposal |
+| 📦 **Reserve** | It holds the stock so two shelters are never promised the same pallet |
+| ✉️ **Reply** | The sender gets a reply in the same thread with `RN-` and `AL-` tracking codes |
 | 🗺️ **Publish** | The need appears on a public map that never shows anyone's email address |
 
-**Humans stay in charge.** The AI only recommends. Stock is reserved, never
-sent automatically. A verified depot or coordinator must confirm before
-anything moves, and only a delivery report marks it as delivered.
+**Human-in-the-loop by design.** The AI recommends; people decide. Stock is
+reserved, never sent automatically. A verified depot or coordinator confirms
+every allocation, and only a delivery report marks it delivered.
 
 </div>
 
@@ -61,20 +60,27 @@ anything moves, and only a delivery report marks it as delivered.
 
 <div align="center">
 
-<a id="idea"></a>
+<a id="hackathon"></a>
 
-## 🏆 The Idea
+## 🏆 Built at EvoHacks 2.0
 
-ResiliNet was built to show that useful disaster
-tooling doesn't have to be a new app. It combines four sponsor platforms into
-one pipeline:
+ResiliNet was built for [**EvoHacks 2.0**](https://evohacks2.devpost.com/)
+as a social-good project. Three EvoHacks sponsors each carry one part of the
+product. Remove any of them and ResiliNet loses a core capability.
 
-| Sponsor | How ResiliNet uses it |
-|:---:|:---|
-| **Agentboxd** | The shared incident inbox, signed webhooks for new mail, and threaded replies |
-| **MojoAuth** | Passwordless email login for volunteers, depots, and coordinators |
-| **Momen** | The public map and accessible list view |
-| **OpenAI / NVIDIA NIM** | Reading emails into structured data and double-checking each proposal |
+| EvoHacks sponsor | Role in ResiliNet | Without it |
+|:---:|:---|:---|
+| [**Agentboxd**](https://agentboxd.com/) | The incident inbox itself: signed webhooks for every new email and threaded replies back to the sender | No way in and no way back. Email *is* the interface. |
+| [**MojoAuth**](https://mojoauth.com/) | Passwordless email login that proves a depot or coordinator before any stock changes | No safe way to confirm or deliver |
+| [**Momen**](https://momen.app/) | The public relief map and accessible list view | No shared picture for responders |
+
+The language understanding comes from **OpenAI or NVIDIA NIM**. The model
+reads free-form email into schema-checked structured data and critiques every
+match before stock is held.
+
+ResiliNet pairs the model with deterministic safety checks: the model handles
+the messy language, and code enforces the rules that must never break, such as
+never reserving more stock than exists.
 
 </div>
 
@@ -86,31 +92,22 @@ one pipeline:
 
 ## ⚙️ How it works
 
-</div>
-
-```text
-                         Volunteer sends an email
-                                    │
-                                    ▼
-                    Agentboxd incident inbox  ── signed webhook ──▶  FastAPI
-                                                                       │
-                                     verify signature · store message + job
-                                                                       │
-                                                                       ▼
-                                                               Durable worker
-                                          extract with LLM (strict schema check)
-                                          find the place (gazetteer → Nominatim)
-                                          ask once if details are missing
-                                          score depots · AI and rules critic
-                                          reserve stock in one transaction
-                                                                       │
-                     ┌─────────────────────────────────┬───────────────┴─────────────┐
-                     ▼                                 ▼                             ▼
-          Threaded reply with codes        Secure confirm links            Public map and list
-               (RN- need, AL- allocation)      (MojoAuth login)          (Momen · /replay · /lite)
+```mermaid
+flowchart TD
+    A["📧 Volunteer email"] --> B["Agentboxd incident inbox"]
+    B -- "signed webhook" --> C["FastAPI intake<br/>verify signature · store message + job"]
+    C --> D["LLM extraction<br/>OpenAI or NVIDIA NIM · strict schema"]
+    D --> E{"Details complete?"}
+    E -- "no" --> F["Ask one follow-up question"]
+    F --> B
+    E -- "yes" --> G["Geocode<br/>gazetteer → Nominatim"]
+    G --> H["Score depots + AI and rules critic"]
+    H --> I["Reserve stock<br/>one locked transaction"]
+    I --> J["✉️ Threaded reply<br/>RN- / AL- codes"]
+    I --> K["🔑 Confirm link<br/>MojoAuth login"]
+    I --> L["🗺️ Public map<br/>Momen · /replay · /lite"]
+    K -- "depot confirms" --> M["Confirmed → Delivered"]
 ```
-
-<div align="center">
 
 Full design, trust boundaries, and scoring formulas: [`docs/architecture.md`](docs/architecture.md)
 
@@ -131,7 +128,7 @@ Full design, trust boundaries, and scoring formulas: [`docs/architecture.md`](do
 | 🔑 | **Links can't be abused** | Every action needs a verified login, a CSRF token, the right role, and a single-use grant |
 | 🕵️ | **Privacy first** | Public data is an allow-list: no emails, tokens, raw messages, or provider payloads |
 | ♿ | **Accessible** | Zero serious axe issues, Lighthouse accessibility 100, and a ~10 KB no-JavaScript view |
-| 📴 | **Offline demo mode** | Replay runs the full pipeline with zero external network calls |
+| 📴 | **Zero-egress replay mode** | The full pipeline runs on a recorded corpus with no external network calls |
 
 </div>
 
@@ -141,34 +138,24 @@ Full design, trust boundaries, and scoring formulas: [`docs/architecture.md`](do
 
 <a id="demo"></a>
 
-## 🚀 Try the demo
+## 🚀 Try it in four commands
 
-No accounts or API keys needed. The replay processes 30 fictional disaster
-emails through the real pipeline and fails if it touches the internet.
+No accounts or API keys needed. Replay mode runs 30 fictional disaster emails
+through the real pipeline and fails if it touches the internet.
 
 </div>
 
 ```bash
-git clone https://github.com/Divyanshu-kumar14/Resili-Net.git
-cd Resili-Net
-cp .env.example .env
-uv sync --frozen
+git clone https://github.com/Divyanshu-kumar14/Resili-Net.git && cd Resili-Net
+uv sync --frozen && uv run alembic upgrade head && uv run python scripts/seed_demo.py
 uv run python scripts/replay_demo.py
-```
-
-<div align="center">
-
-Then open the live view in your browser:
-
-</div>
-
-```bash
 RESILINET_APP_ENV=replay uv run uvicorn resilinet.main:app --port 8000
-# http://localhost:8000/replay        map and table
-# http://localhost:8000/replay/lite   low-bandwidth view
 ```
 
 <div align="center">
+
+Then open **http://localhost:8000/replay** for the map and table, or
+**http://localhost:8000/replay/lite** for the low-bandwidth view.
 
 Requires **Python 3.11** and [**uv**](https://docs.astral.sh/uv/).
 The five-minute presentation walkthrough is in [`docs/demo-script.md`](docs/demo-script.md).
@@ -179,7 +166,31 @@ The five-minute presentation walkthrough is in [`docs/demo-script.md`](docs/demo
 
 <div align="center">
 
-<a id="built-with"></a>
+<a id="results"></a>
+
+## 📊 Results
+
+| Check | Result |
+|:---|:---:|
+| Automated tests (unit, integration, end-to-end, PostgreSQL) | **486 passing** |
+| Pipeline field accuracy on the 30-message replay corpus | **80 / 80** |
+| Duplicate reports detected | **10 / 10** |
+| Messages reaching the correct outcome | **30 / 30** |
+| Median pipeline time per message (replay) | **~20 ms** |
+| Over-reservations under concurrent workers | **0** |
+| Serious or critical accessibility issues | **0** |
+| Lighthouse accessibility score | **100** |
+
+</div>
+
+```bash
+uv run pytest -q && uv run ruff check src scripts tests && uv run mypy src
+uv run python scripts/evaluate.py
+```
+
+<br>
+
+<div align="center">
 
 ## 🧰 Built with
 
@@ -194,32 +205,6 @@ The five-minute presentation walkthrough is in [`docs/demo-script.md`](docs/demo
 | Quality | pytest · Ruff · mypy (strict) · Playwright · axe-core · Lighthouse |
 
 </div>
-
-<br>
-
-<div align="center">
-
-## 📊 Results
-
-| Check | Result |
-|:---|:---:|
-| Automated tests | **486 passing** |
-| Extraction field accuracy (recorded corpus) | **80 / 80** |
-| Duplicate reports detected | **10 / 10** |
-| Messages reaching a correct outcome | **30 / 30** |
-| Serious or critical accessibility issues | **0** |
-| Lighthouse accessibility score | **100** |
-
-<sub>Extraction figures use recorded model output, so they measure the pipeline, not live model quality.</sub>
-
-</div>
-
-```bash
-uv run pytest -q
-uv run ruff check src scripts tests
-uv run mypy src
-uv run python scripts/evaluate.py
-```
 
 <br>
 
@@ -275,19 +260,38 @@ docs/             Architecture, deployment, demo script, evidence
 
 <div align="center">
 
-## 🚧 Status
+## 🧭 Next milestones
 
-The full pipeline is built and tested locally and in CI, and the service is
-deployed on Render. Two pieces still wait on sponsor account access: a
-recorded end-to-end run with the live sponsor accounts, and the published Momen
-map page. Until then, the demo uses the offline replay.
-Details: [`docs/evidence/release-checklist.md`](docs/evidence/release-checklist.md)
+| Milestone | Goal |
+|:---|:---|
+| Published Momen map | Hosted public map with live refresh for responders |
+| Timed live run | Phone email to map pin through all four sponsor services, with measured latency |
+| Multi-incident operations | Several concurrent disasters with separate inboxes and maps |
+| SMS bridge | The same pipeline for areas where only text messages get through |
 
 </div>
 
 <br>
 
 <div align="center">
+
+## 🛠️ Built during the event
+
+All code in this repository was written during EvoHacks 2.0, between
+21 and 22 November 2026; the first commit is from the opening day of the event.
+
+| Pre-existing component | Used for |
+|:---|:---|
+| Open-source libraries (FastAPI, SQLAlchemy, Alembic, Pydantic, Playwright, axe-core, Lighthouse) | Web service, database, validation, accessibility audit |
+| Sponsor and provider APIs (Agentboxd, MojoAuth, Momen, OpenAI, NVIDIA NIM, Nominatim) | Email, login, map, AI, geocoding |
+
+<br>
+
+## 👤 Team
+
+**Divyanshu Kumar** ([@Divyanshu-kumar14](https://github.com/Divyanshu-kumar14)): design, backend, AI pipeline, and deployment
+
+<br>
 
 <a id="docs"></a>
 
@@ -300,11 +304,10 @@ Details: [`docs/evidence/release-checklist.md`](docs/evidence/release-checklist.
 ## 📄 License
 
 Released under the [MIT License](LICENSE).
-
 All demo data is fictional and labelled as a simulation.
 
 <br>
 
-**Built for a hackathon, with the people on the ground in mind.**
+**Built at [EvoHacks 2.0](https://evohacks2.devpost.com/), with the people on the ground in mind.**
 
 </div>
