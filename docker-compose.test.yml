@@ -1,0 +1,23 @@
+# Disposable local PostgreSQL for the Task 22 concurrency proof ONLY.
+# Never point this at a developer or production database: the suite creates
+# and drops uniquely named scratch databases (resilinet_scratch_*).
+#
+#   docker compose -f docker-compose.test.yml up -d
+#   uv run pytest tests/postgres -q
+#   docker compose -f docker-compose.test.yml down -v
+services:
+  postgres-test:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: resilinet_test
+      POSTGRES_PASSWORD: resilinet_test
+      POSTGRES_DB: postgres
+    ports:
+      - "54329:5432"
+    tmpfs:
+      - /var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resilinet_test -d postgres"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

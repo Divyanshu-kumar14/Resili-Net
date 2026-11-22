@@ -1036,8 +1036,15 @@ class AllocationService:
     # -- locking helpers -----------------------------------------------------------------
 
     async def _locked_need(self, session: AsyncSession, need_id: UUID) -> Need:
+        # populate_existing is load-bearing: callers may already hold an
+        # unlocked snapshot of this row in the identity map, and a locked
+        # re-read that does not refresh it would validate transitions
+        # against stale state (proven by tests/postgres).
         need = await session.scalar(
-            sa.select(Need).where(Need.id == need_id).with_for_update()
+            sa.select(Need)
+            .where(Need.id == need_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if need is None:
             raise AllocationStateError(f"need {need_id} does not exist")
@@ -1051,12 +1058,16 @@ class AllocationService:
             raise AllocationStateError(f"allocation {allocation_id} does not exist")
         need = await self._locked_need(session, peek.need_id)
         supply = await session.scalar(
-            sa.select(Supply).where(Supply.id == peek.supply_id).with_for_update()
+            sa.select(Supply)
+            .where(Supply.id == peek.supply_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
         allocation = await session.scalar(
             sa.select(Allocation)
             .where(Allocation.id == allocation_id)
             .with_for_update()
+            .execution_options(populate_existing=True)
         )
         if supply is None or allocation is None:  # pragma: no cover - FK guarantees
             raise AllocationStateError("allocation aggregate is incomplete")

@@ -164,6 +164,16 @@ dispatch or delivery.
   aggregate and re-check role, token, quantity, and state in that transaction.
 - SQLite tests prove behavior; PostgreSQL tests prove concurrent workers cannot
   over-reserve.
+- **Locked re-reads must refresh.** Any path that reads a row unlocked and
+  later re-reads it under `FOR UPDATE` in the same transaction must use
+  `populate_existing`; otherwise SQLAlchemy returns the stale identity-map
+  snapshot and state checks run against pre-lock state. Task 22 proved the
+  failure mode (a cancellation and a delivery both "winning") and the fix in
+  `AllocationService._locked_need`/`_locked_trio`. The concurrency suite is
+  `tests/postgres/` against a disposable local PostgreSQL
+  (`docker-compose.test.yml`, scratch databases named `resilinet_scratch_*`,
+  created and dropped by the suite, name verified before dropping). It must
+  never be pointed at a developer or production database.
 
 ## Phase 1 durable path
 

@@ -1,0 +1,38 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: resilinet_test
+          POSTGRES_PASSWORD: resilinet_test
+          POSTGRES_DB: postgres
+        ports:
+          - 54329:5432
+        options: >-
+          --health-cmd "pg_isready -U resilinet_test -d postgres"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+    env:
+      RESILINET_TEST_PG_ADMIN_URL: postgresql+asyncpg://resilinet_test:resilinet_test@localhost:54329/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: Sync frozen dependencies
+        run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check src scripts tests
+      - name: Typecheck
+        run: uv run mypy src
+      - name: Test (SQLite behaviour + PostgreSQL concurrency)
+        run: uv run pytest -q
